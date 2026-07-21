@@ -41,8 +41,10 @@ class Instance:
     def instance_id(self) -> str:
         return _truncate_hash(f"{self.user_slug}-{self.release_slug}")
 
-    def name(self, component: str, *, hostname_safe: bool = True) -> str:
-        limit = DNS_LABEL_MAX if hostname_safe else 253
+    def name(self, component: str, *, hostname_safe: bool = True, max_length: int | None = None) -> str:
+        limit = max_length if max_length is not None else (DNS_LABEL_MAX if hostname_safe else 253)
+        if limit < 10 or limit > 253:
+            raise ValueError(f"name max_length must be between 10 and 253, got {limit}")
         return _truncate_hash(f"{self.instance_id}-{_slug(component)}", limit)
 
     def user_scoped_name(self, component: str, *, hostname_safe: bool = True) -> str:
@@ -66,7 +68,3 @@ class Instance:
         if role:
             selector["llm-d.ai/role"] = _slug(role)
         return selector
-
-    def lustre_path(self, *parts: str) -> str:
-        clean = [self.user_slug, *[_slug(part) for part in parts if part]]
-        return "/mnt/lustre/" + "/".join(clean)

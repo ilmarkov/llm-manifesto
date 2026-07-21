@@ -1,8 +1,10 @@
-"""LeaderWorkerSet renderer for vLLM roles, including sidecars and fabric mounts."""
+"""Workload renderer for vLLM roles, including sidecars and fabric mounts."""
 
 from __future__ import annotations
 
-from .common import env_list, secret_env
+from typing import Any
+
+from .common import env_list, field_ref_env, secret_env
 from .sidecars import sidecars
 from ..cluster import Cluster
 from ..instance import Instance
@@ -11,15 +13,14 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
-def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
+def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
     resolved = resolve_role(spec, instance, cluster, role)
-    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
-    lws_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
+    external_dp = role.parallelism.dp_enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
+    workload_name = instance.user_scoped_name(role.workload_name) if role.workload_name else instance.name(role.name)
 
     containers, extra_volumes = sidecars(
         spec.runtime.sidecars,
         dcgm_config_name=instance.name("dcgm-metrics"),
-        images=cluster.images,
     )
     volumes = cluster.base_volumes()
     if role.shm_size:
@@ -32,10 +33,10 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
     ]
     if external_dp:
         container_ports.insert(0, {"containerPort": 8100, "name": "dp-supervisor", "protocol": "TCP"})
-    readiness_ports = resolved.ports.public if role.routing_sidecar else resolved.ports.backend
+    readiness_ports = resolved.ports.public if role.routing_proxy else resolved.ports.backend
 
     init_containers = []
-    if role.routing_sidecar:
+    if role.routing_proxy:
         init_containers.append(
             {
                 "name": "routing-proxy",
@@ -61,16 +62,30 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
             }
         )
 
+    security_context = cluster.pod_defaults.container_security_context
+    if security_context is None:
+        security_context = {
+            "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
+            "runAsGroup": 0,
+            "runAsUser": 0,
+        }
+    container_env = [
+        secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN"),
+        *env_list(resolved.env),
+    ]
+    if (
+        _uses_nixl_connector(role.kv_transfer_config)
+        and "VLLM_NIXL_SIDE_CHANNEL_HOST" not in resolved.env
+    ):
+        container_env.append(
+            field_ref_env("VLLM_NIXL_SIDE_CHANNEL_HOST", "status.podIP")
+        )
+
     vllm_container = {
         "name": "vllm",
         "image": spec.model.image,
         "imagePullPolicy": "Always",
-        # TODO(security): make these capabilities/runAsRoot explicit strategy knobs instead of the default.
-        "securityContext": {
-            "capabilities": {"add": ["IPC_LOCK", "SYS_RAWIO"]},
-            "runAsGroup": 0,
-            "runAsUser": 0,
-        },
+        "securityContext": security_context,
         "command": ["/bin/bash", "-c"],
         "args": [
             build_launch_script(
@@ -82,7 +97,7 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
                 vllm_args=resolved.vllm_args,
             )
         ],
-        "env": [secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN"), *env_list(resolved.env)],
+        "env": container_env,
         "ports": container_ports,
         "readinessProbe": {
             "exec": {
@@ -122,9 +137,9 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
             "timeoutSeconds": 5,
             "failureThreshold": 1800,
         }
-    if cluster.rdma_resource_name:
+    if cluster.rdma.resource_name:
         for resources in ("requests", "limits"):
-            vllm_container["resources"][resources][cluster.rdma_resource_name] = cluster.rdma_resource_value
+            vllm_container["resources"][resources][cluster.rdma.resource_name] = cluster.rdma.value
     if resolved.resource_claims:
         vllm_container["resources"]["claims"] = [{"name": claim["name"]} for claim in resolved.resource_claims]
 
@@ -133,6 +148,9 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
         "llm-d.ai/model": spec.model.label_value,
         "llm-d.ai/deployment": spec.topology.value,
     }
+    pod_metadata = {"labels": pod_labels}
+    if cluster.pod_defaults.annotations:
+        pod_metadata["annotations"] = cluster.pod_defaults.annotations
 
     pod_spec = {
         "serviceAccountName": instance.name("model-server"),
@@ -140,16 +158,43 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
         "volumes": volumes,
         "containers": [vllm_container, *containers],
     }
+    if cluster.pod_defaults.affinity:
+        pod_spec["affinity"] = cluster.pod_defaults.affinity
+    if cluster.pod_defaults.tolerations:
+        pod_spec["tolerations"] = cluster.pod_defaults.tolerations
     if init_containers:
         pod_spec["initContainers"] = init_containers
     if resolved.resource_claims:
         pod_spec["resourceClaims"] = resolved.resource_claims
 
+    if role.lws.size == 1:
+        selector = instance.pod_selector(role.name)
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": workload_name,
+                "labels": instance.labels("model-server", role.name),
+            },
+            "spec": {
+                "replicas": role.lws.replicas,
+                "selector": {"matchLabels": selector},
+                "strategy": {
+                    "type": "RollingUpdate",
+                    "rollingUpdate": {"maxSurge": 0, "maxUnavailable": "100%"},
+                },
+                "template": {
+                    "metadata": pod_metadata,
+                    "spec": pod_spec,
+                },
+            },
+        }
+
     return {
         "apiVersion": "leaderworkerset.x-k8s.io/v1",
         "kind": "LeaderWorkerSet",
         "metadata": {
-            "name": lws_name,
+            "name": workload_name,
             "labels": instance.labels("lws", role.name)
             | {
                 "llm-d.ai/inferenceServing": "true",
@@ -166,9 +211,20 @@ def render_lws(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role:
             "leaderWorkerTemplate": {
                 "size": role.lws.size,
                 "workerTemplate": {
-                    "metadata": {"labels": pod_labels},
+                    "metadata": pod_metadata,
                     "spec": pod_spec,
                 },
             },
         },
     }
+
+
+def _uses_nixl_connector(value: Any) -> bool:
+    if isinstance(value, dict):
+        connector = value.get("kv_connector")
+        if isinstance(connector, str) and "nixl" in connector.casefold():
+            return True
+        return any(_uses_nixl_connector(item) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_uses_nixl_connector(item) for item in value)
+    return False

@@ -13,14 +13,7 @@ from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 def _plugin_config(routing: RoutingSpec) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
-    if routing.kind == RoutingKind.RANDOM:
-        config = {
-            "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
-            "kind": "EndpointPickerConfig",
-            "plugins": [{"type": "weighted-random-picker"}],
-            "schedulingProfiles": [{"name": "default", "plugins": [{"pluginRef": "weighted-random-picker"}]}],
-        }
-    elif routing.kind == RoutingKind.PD:
+    if routing.kind == RoutingKind.PD:
         config = {
             "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
             "kind": "EndpointPickerConfig",
@@ -91,8 +84,8 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
     infpool_name = instance.name("infpool")
     epp_name = instance.name("infpool-epp")
     epp_role_name = instance.name("infpool-epp-rbac")
-    gateway_name = instance.name("inference-gateway")
-    gateway_service = instance.name("inference-gateway-istio")
+    gateway_name_limit = 63 - len(cluster.gateway.class_name) - 1
+    gateway_name = instance.name("gateway", max_length=gateway_name_limit)
 
     selector = instance.pod_selector(None if spec.routing.kind == RoutingKind.PD else spec.routing.target_role) | {
         "llm-d.ai/inferenceServing": "true",
@@ -252,7 +245,8 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                         }
                     },
                     sort_keys=False,
-                )
+                ),
+                "service": yaml.safe_dump({"spec": {"type": cluster.gateway.service_type}}, sort_keys=False),
             },
         },
         {
@@ -270,7 +264,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                         "name": instance.name("gateway-options"),
                     }
                 },
-                "gatewayClassName": "istio",
+                "gatewayClassName": cluster.gateway.class_name,
                 "listeners": [
                     {
                         "name": "default",
@@ -278,25 +272,6 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                         "protocol": "HTTP",
                         "allowedRoutes": {"namespaces": {"from": "Same"}},
                     }
-                ],
-            },
-        },
-        {
-            "apiVersion": "v1",
-            "kind": "Service",
-            "metadata": {
-                "name": gateway_service,
-                "labels": {
-                    **instance.labels("gateway"),
-                    "gateway.networking.k8s.io/gateway-name": gateway_name,
-                    "istio.io/enable-inference-extproc": "true",
-                },
-            },
-            "spec": {
-                "selector": {"gateway.networking.k8s.io/gateway-name": gateway_name},
-                "ports": [
-                    {"name": "status-port", "port": 15021, "protocol": "TCP", "targetPort": 15021},
-                    {"name": "http", "port": 80, "protocol": "TCP", "targetPort": 8080},
                 ],
             },
         },

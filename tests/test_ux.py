@@ -4,10 +4,10 @@ from pathlib import Path
 
 from manifesto.cluster import load_cluster
 from manifesto.instance import Instance
-from manifesto.normalize import apply_cluster_defaults
+from manifesto.parallelism import parallel_layout
 from manifesto.render import render
 from manifesto.resolve import resolve_role
-from manifesto.spec import DpLoadBalancing, RoutingKind, load_spec
+from manifesto.spec import DeploymentSpec, DpLoadBalancing, RoutingKind, load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,17 +18,18 @@ DEEPSEEK = ROOT / "models" / "deepseek-v4" / "1P-EP8-1D-EP8.yaml"
 def test_compact_parallelism_and_equations_resolve_to_runtime_values():
     spec = load_spec(DEEPSEEK, CLUSTER)
     role = spec.role("decode")
+    layout = parallel_layout(role)
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
     assert role.gpus_per_pod == 4
-    assert role.tensor_parallel_size == 1
-    assert role.data_parallel.enabled is True
-    assert role.data_parallel.local_size == 4
-    assert role.expert_parallel.enabled is True
+    assert role.parallelism.tp == 1
+    assert role.parallelism.dp_enabled is True
+    assert layout.dp_local_size == 4
+    assert role.parallelism.ep is True
     assert role.dp_load_balancing == DpLoadBalancing.EXTERNAL
 
     assert resolved.env["MAX_TOKENS"] == "1024"
-    assert resolved.env["UCX_NET_DEVICES"] == CLUSTER.ucx_net_devices
+    assert resolved.env["UCX_NET_DEVICES"] == CLUSTER.fabric.ucx_net_devices
     assert resolved.env["NVSHMEM_QP_DEPTH"] == "2050"
     assert resolved.vllm_args["max_num_batched_tokens"] == 1024
     assert resolved.vllm_args["max_num_seqs"] == 1024
@@ -47,14 +48,14 @@ def test_fabric_profiles_are_cluster_config_driven():
     assert "NCCL_MNNVL_ENABLE" not in standard.env
 
 
-def test_dp_is_global_and_local_dp_is_derived_from_lws_nodes():
+def test_dp_is_global_and_local_dp_is_derived_from_lws_size():
     spec = load_spec(DEEPSEEK, CLUSTER)
     role = spec.role("decode")
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
     assert role.lws.size == 2
-    assert role.data_parallel.local_size == 4
-    assert role.routing_sidecar is True
+    assert parallel_layout(role).dp_local_size == 4
+    assert role.routing_proxy is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
     assert resolved.env["MAX_TOKENS"] == "1024"
@@ -66,7 +67,7 @@ def test_pd_topology_adds_decode_routing_proxy_defaults():
 
     assert spec.routing.kind == RoutingKind.PD
     assert spec.routing.target_role == "decode"
-    assert role.routing_sidecar is True
+    assert role.routing_proxy is True
     assert role.serving_port_base == 8000
     assert role.backend_port_base == 8200
 
@@ -89,8 +90,8 @@ def test_prefill_tp_spans_lws_nodes():
     role = spec.role("prefill")
     resolved = resolve_role(spec, Instance("tester", spec.release), CLUSTER, role)
 
-    assert role.tensor_parallel_size == 1
-    assert role.data_parallel.enabled is True
+    assert role.parallelism.tp == 1
+    assert role.parallelism.dp_enabled is True
     assert resolved.vllm_args["trust_remote_code"] is True
 
 
@@ -100,12 +101,79 @@ def test_single_gpu_no_dp_role_derives_one_gpu_from_tp():
 
     assert role.gpus_per_pod == 1
     assert role.resources.gpus == 1
+    assert role.resources.cpu == "8"
+    assert role.resources.memory == "64Gi"
+
+
+def test_omitted_resources_scale_with_local_dp_gpu_shape():
+    spec = DeploymentSpec.model_validate(
+        {
+            "release": "scaled",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
+            "roles": [
+                {
+                    "name": "prefill",
+                    "lws": {"size": 1, "replicas": 4},
+                    "parallelism": {"tp": 1, "dp": 2},
+                }
+            ],
+        }
+    )
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.gpus_per_node = 8
+    cluster.model_server_resources.cpu_per_gpu = "8"
+    cluster.model_server_resources.memory_per_gpu = "64Gi"
+
+    spec.apply_cluster_defaults(cluster)
+
+    role = spec.role("prefill")
+    assert role.gpus_per_pod == 2
+    assert role.resources.cpu == "16"
+    assert role.resources.memory == "128Gi"
+
+
+def test_explicit_cpu_and_memory_are_preserved_exactly():
+    spec = DeploymentSpec.model_validate(
+        {
+            "release": "explicit",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
+            "roles": [
+                {
+                    "name": "decode",
+                    "parallelism": {"tp": 1},
+                    "resources": {"cpu": "3500m", "memory": "70Gi"},
+                }
+            ],
+        }
+    )
+
+    spec.apply_cluster_defaults(CLUSTER)
+
+    assert spec.role("decode").resources.cpu == "3500m"
+    assert spec.role("decode").resources.memory == "70Gi"
+
+
+def test_cache_key_comes_from_image_identity_unless_overridden():
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+
+    assert spec.cache_key == "v0.25.1"
+    spec.model.image = "registry.example/vllm@sha256:abc123"
+    assert spec.cache_key == "sha256-abc123"
+    spec.cache.key = "dev/build 42"
+    assert spec.cache_key == "dev-build-42"
 
 
 def test_explicit_resource_gpu_request_overrides_inferred_request():
-    normalized = apply_cluster_defaults(
+    spec = DeploymentSpec.model_validate(
         {
-            "model": {"id": "model"},
+            "release": "gpus",
+            "topology": "aggregated",
+            "model": {"id": "model", "image": "image"},
+            "routing": {"kind": "disabled"},
             "roles": [
                 {
                     "name": "prefill",
@@ -114,20 +182,19 @@ def test_explicit_resource_gpu_request_overrides_inferred_request():
                     "resources": {"gpus": 1},
                 }
             ],
-        },
-        gpus_per_node=8,
-        hf_home="/cache",
+        }
     )
+    spec.apply_cluster_defaults(CLUSTER.model_copy(update={"gpus_per_node": 8}))
 
-    assert normalized["roles"][0]["gpus_per_pod"] == 2
-    assert normalized["roles"][0]["resources"]["gpus"] == 1
+    assert spec.role("prefill").gpus_per_pod == 2
+    assert spec.role("prefill").resources.gpus == 1
 
 
 def test_cluster_path_templates_feed_cache_dev_and_logs():
     cluster = CLUSTER.with_path_overrides(
         user_root="/vol/{user}",
         log_root="/logs/{user}/{release}",
-        cache_root="/cache/{user}/{release}/{gpu_arch}/{cuda}/{vllm_version}",
+        cache_root="/cache/{user}/{release}/{gpu_arch}/{cuda}/{cache_key}",
         dev_venv="/venvs/{user}/{release}",
         dev_source="/src/{user}",
     )
@@ -141,11 +208,23 @@ def test_cluster_path_templates_feed_cache_dev_and_logs():
     lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet" and obj["metadata"]["name"].endswith("decode"))
     script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
 
-    assert resolved.env["VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
-    assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/dev/vllm"
+    assert resolved.env["MANIFESTO_VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
+    assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/vllm"
+    assert resolved.env["HOME"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/home"
+    assert "USER" not in resolved.env
+    assert resolved.env["TRITON_CACHE_DIR"].endswith("/v0.25.1/triton")
+    assert resolved.env["TORCHINDUCTOR_CACHE_DIR"].endswith("/v0.25.1/torchinductor")
     assert "LOG_DIR=/logs/tester-name/wide-ep-1p-ep8-1d-ep8/decode" in script
     assert "find /src/tester-name/vllm" in script
     assert "ucx-lib" not in script
+
+
+def test_openshift_cluster_sets_stable_user_for_arbitrary_uid():
+    cluster = CLUSTER.model_copy(update={"platform": "openshift"})
+    spec = load_spec(DEEPSEEK, cluster)
+    resolved = resolve_role(spec, Instance("tester", spec.release), cluster, spec.role("decode"))
+
+    assert resolved.env["USER"] == "vllm"
 
 
 def test_pre_launch_hooks_run_before_rank_launch_setup():
@@ -158,6 +237,6 @@ def test_pre_launch_hooks_run_before_rank_launch_setup():
     lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet" and obj["metadata"]["name"].endswith("decode"))
     script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
 
-    assert script.index("source \"${VLLM_DEV_VENV}/bin/activate\"") < script.index("echo runtime-hook")
+    assert script.index("source \"${MANIFESTO_VLLM_DEV_VENV}/bin/activate\"") < script.index("echo runtime-hook")
     assert script.index("echo runtime-hook") < script.index("echo role-hook")
     assert script.index("echo role-hook") < script.index("DP_SIZE_LOCAL=4")

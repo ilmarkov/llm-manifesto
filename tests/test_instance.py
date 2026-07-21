@@ -1,4 +1,4 @@
-"""Tests for the multi-tenant instance naming, selector, and path invariants."""
+"""Tests for the multi-tenant instance naming and selector invariants."""
 
 from manifesto.instance import Instance
 
@@ -25,7 +25,3 @@ def test_selectors_are_disjoint_across_instances():
     b_labels = b.labels("model-server", "decode")
 
     assert any(b_labels.get(key) != value for key, value in selector.items())
-
-
-def test_lustre_paths_are_user_scoped():
-    assert Instance("alice", "x").lustre_path("jit-cache") != Instance("bob", "x").lustre_path("jit-cache")

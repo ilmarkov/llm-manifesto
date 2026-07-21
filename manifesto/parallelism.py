@@ -1,10 +1,16 @@
-"""Derive local and global TP/DP layout from a role's parallelism settings."""
+"""Derive and validate the local/global TP/DP layout of a role.
+
+Impossible layouts are hard errors: the renderer never rounds a requested
+parallel size to something that happens to fit.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from .spec import RoleSpec
+if TYPE_CHECKING:
+    from .spec import RoleSpec
 
 
 @dataclass(frozen=True)
@@ -15,27 +21,50 @@ class ParallelLayout:
     dp_world_size: int
 
 
-def parallel_layout(role: RoleSpec) -> ParallelLayout:
-    tp_local_size = _local_tp_size(role)
-    dp_slots_per_node = max(1, role.gpus_per_pod // tp_local_size)
+def parallel_layout(role: "RoleSpec") -> ParallelLayout:
+    parallelism = role.parallelism
+    gpus = role.gpus_per_pod
+    nodes = role.lws.size
 
-    if role.data_parallel.enabled:
-        assert role.data_parallel.local_size is not None
-        dp_local_size = role.data_parallel.local_size
-        dp_world_size = role.lws.size * dp_local_size
+    if parallelism.tp <= gpus:
+        tp_local = parallelism.tp
     else:
-        dp_local_size = max(1, dp_slots_per_node)
-        dp_world_size = 1
+        if parallelism.tp % nodes:
+            raise ValueError(
+                f"{role.name}: tp={parallelism.tp} does not divide evenly across {nodes} LWS nodes"
+            )
+        tp_local = parallelism.tp // nodes
+        if tp_local > gpus:
+            raise ValueError(
+                f"{role.name}: tp={parallelism.tp} needs {tp_local} GPUs per pod but only {gpus} are available"
+            )
+    if gpus % tp_local:
+        raise ValueError(f"{role.name}: {gpus} GPUs per pod is not divisible by local TP {tp_local}")
+
+    if parallelism.dp_enabled:
+        if parallelism.dp_size % nodes:
+            raise ValueError(
+                f"{role.name}: dp={parallelism.dp_size} does not divide evenly across {nodes} LWS nodes"
+            )
+        dp_local = parallelism.dp_size // nodes
+        if tp_local * dp_local != gpus:
+            raise ValueError(
+                f"{role.name}: {dp_local} local DP ranks x local TP {tp_local} "
+                f"needs {dp_local * tp_local} GPUs per pod, got {gpus}"
+            )
+        dp_world = parallelism.dp_size
+    else:
+        dp_local = 1
+        dp_world = 1
+        if gpus != tp_local:
+            raise ValueError(
+                f"{role.name}: DP is disabled but local TP {tp_local} leaves "
+                f"{gpus - tp_local} of {gpus} GPUs idle"
+            )
 
     return ParallelLayout(
-        tp_world_size=role.tensor_parallel_size,
-        tp_local_size=tp_local_size,
-        dp_local_size=dp_local_size,
-        dp_world_size=dp_world_size,
+        tp_world_size=parallelism.tp,
+        tp_local_size=tp_local,
+        dp_local_size=dp_local,
+        dp_world_size=dp_world,
     )
-
-
-def _local_tp_size(role: RoleSpec) -> int:
-    if role.tensor_parallel_size <= role.gpus_per_pod:
-        return role.tensor_parallel_size
-    return max(1, role.tensor_parallel_size // role.lws.size)

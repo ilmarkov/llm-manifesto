@@ -56,7 +56,7 @@ def build_launch_script(
     vllm_args: dict[str, Any] | None = None,
 ) -> str:
     layout = parallel_layout(role)
-    external_dp = role.data_parallel.enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
+    external_dp = role.parallelism.dp_enabled and role.dp_load_balancing == DpLoadBalancing.EXTERNAL
     lines = [
         "set -euo pipefail",
         f"LOG_DIR={shlex.quote(log_dir)}",
@@ -65,20 +65,10 @@ def build_launch_script(
         'exec > >(tee -a "$LOG_FILE") 2>&1',
         'echo "=== Pod $HOSTNAME started at $(date -Iseconds) ==="',
         "",
-        f"FORK_REPO={shlex.quote(spec.runtime.fork_repo)}",
-        f"FORK_BRANCH={shlex.quote(spec.runtime.fork_branch)}",
-        'if [ -n "$FORK_BRANCH" ] && [ -d /opt/vllm-source ]; then',
-        "  cd /opt/vllm-source",
-        '  git remote add fork "$FORK_REPO" 2>/dev/null || git remote set-url fork "$FORK_REPO"',
-        '  git fetch fork "$FORK_BRANCH"',
-        '  git checkout "fork/$FORK_BRANCH"',
-        "  cd -",
-        "fi",
-        "",
         f"find {shlex.quote(dev_source + '/vllm')} -name __pycache__ -type d -exec rm -rf {{}} + 2>/dev/null || true",
-        'if [ -n "${VLLM_DEV_VENV:-}" ] && [ -d "${VLLM_DEV_VENV}" ]; then',
-        '  echo "Using dev venv at ${VLLM_DEV_VENV}"',
-        '  source "${VLLM_DEV_VENV}/bin/activate"',
+        'if [ -n "${MANIFESTO_VLLM_DEV_VENV:-}" ] && [ -d "${MANIFESTO_VLLM_DEV_VENV}" ]; then',
+        '  echo "Using dev venv at ${MANIFESTO_VLLM_DEV_VENV}"',
+        '  source "${MANIFESTO_VLLM_DEV_VENV}/bin/activate"',
         "elif [ -f /opt/vllm/bin/activate ]; then",
         "  source /opt/vllm/bin/activate",
         "fi",
@@ -92,12 +82,15 @@ def build_launch_script(
             "",
         ]
 
-    if role.data_parallel.enabled:
+    if role.parallelism.dp_enabled:
         lines += [
             f"DP_SIZE_LOCAL={layout.dp_local_size}",
             f"DP_SIZE={layout.dp_world_size}",
-            "START_RANK=$(( ${LWS_WORKER_INDEX:-0} * DP_SIZE_LOCAL ))",
         ]
+        if role.lws.size > 1:
+            lines.append("START_RANK=$(( LWS_WORKER_INDEX * DP_SIZE_LOCAL ))")
+        else:
+            lines.append("START_RANK=0")
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
@@ -110,24 +103,26 @@ def build_launch_script(
     ]
     if not external_dp:
         base_args[3:3] = [["--device-ids", "$GPUS"]]
-    if role.expert_parallel.enabled:
+    if role.parallelism.ep:
         base_args.append("--enable-expert-parallel")
     if external_dp:
+        dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
         base_args += [
             ["--data-parallel-size", "$DP_SIZE"],
             ["--data-parallel-start-rank", "$START_RANK"],
             ["--data-parallel-size-local", "$DP_SIZE_LOCAL"],
-            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-address", dp_address],
             ["--data-parallel-rpc-port", "5555"],
             "--data-parallel-multi-port-external-lb",
             ["--data-parallel-supervisor-port", "8100"],
         ]
-    elif role.data_parallel.enabled:
+    elif role.parallelism.dp_enabled:
+        dp_address = "${LWS_LEADER_ADDRESS}" if role.lws.size > 1 else "127.0.0.1"
         base_args += [
             ["--data-parallel-size", "$DP_SIZE"],
             ["--data-parallel-rank", "$RANK"],
             ["--data-parallel-size-local", "1"],
-            ["--data-parallel-address", "${LWS_LEADER_ADDRESS}"],
+            ["--data-parallel-address", dp_address],
             ["--data-parallel-rpc-port", "5555"],
         ]
     if role.kv_transfer_config:

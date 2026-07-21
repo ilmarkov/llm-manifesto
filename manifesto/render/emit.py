@@ -6,8 +6,8 @@ import io
 
 import yaml
 
-from .base import render_dcgm_metrics_configmap, render_service_account
-from .lws import render_lws
+from .base import render_dcgm_metrics_configmap, render_openshift_scc_binding, render_service_account
+from .lws import render_workload
 from .routing import render_routing
 from ..cluster import Cluster
 from ..instance import Instance
@@ -41,10 +41,14 @@ def render(spec: DeploymentSpec, *, user: str, cluster: Cluster, routing_only: b
         return render_routing(spec, instance, cluster)
 
     objects = [render_service_account(instance)]
-    if any("dcgm-exporter" in spec.runtime.sidecars for _role in spec.roles):
+    if cluster.openshift.scc:
+        objects.append(
+            render_openshift_scc_binding(instance, namespace=spec.namespace, scc=cluster.openshift.scc)
+        )
+    if spec.roles and "dcgm-exporter" in spec.runtime.sidecars:
         objects.append(render_dcgm_metrics_configmap(instance))
     for role in spec.roles:
-        objects.append(render_lws(spec, instance, cluster, role))
+        objects.append(render_workload(spec, instance, cluster, role))
     objects.extend(render_routing(spec, instance, cluster))
     return objects
 

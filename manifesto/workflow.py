@@ -13,11 +13,11 @@ from pathlib import Path
 from .cluster import load_cluster
 from .instance import Instance
 from .render import render, render_to_yaml
-from .spec import load_spec
-from .warnings import collect_warnings
+from .spec import RoutingKind, load_spec
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR_NAME = "llm-manifesto"
 
 
 class WorkflowError(RuntimeError):
@@ -38,7 +38,7 @@ class RuntimeConfig:
     @classmethod
     def from_args(cls, args, *, require_cluster: bool = True) -> "RuntimeConfig":
         load_dotenv()
-        user = getattr(args, "user", None) or os.environ.get("USER") or "dev"
+        user = resolve_user(getattr(args, "user", None))
         namespace = resolve_namespace(getattr(args, "namespace", None))
         cluster_path = resolve_cluster(getattr(args, "cluster", None)) if require_cluster else getattr(args, "cluster", None)
         render_out = Path(
@@ -51,22 +51,60 @@ class RuntimeConfig:
         return ["kubectl", "-n", self.namespace]
 
 
-def load_dotenv(path: Path = ROOT / ".env") -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+def config_home() -> Path:
+    if configured := os.environ.get("MANIFESTO_CONFIG_HOME"):
+        return Path(configured).expanduser()
+    if xdg_home := os.environ.get("XDG_CONFIG_HOME"):
+        return Path(xdg_home).expanduser() / CONFIG_DIR_NAME
+    return Path.home() / ".config" / CONFIG_DIR_NAME
+
+
+def load_dotenv(path: Path | None = None) -> None:
+    paths = [path] if path is not None else [config_home() / ".env", ROOT / ".env"]
+    for env_path in paths:
+        if not env_path.exists():
             continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'\"")
-        if key and key not in os.environ:
-            os.environ[key] = value
+        for raw_line in env_path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line.removeprefix("export ").strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def resolve_model(value: str) -> str:
+    return _resolve_catalog_path(value, "models")
+
+
+def _resolve_catalog_path(value: str, catalog: str) -> str:
+    path = Path(value).expanduser()
+    variants = [path]
+    if not path.suffix:
+        variants.append(path.with_suffix(".yaml"))
+
+    for candidate in variants:
+        if candidate.exists():
+            return str(candidate)
+    if path.is_absolute():
+        return str(path)
+
+    for root in (config_home() / catalog, ROOT / catalog):
+        for candidate in variants:
+            resolved = root / candidate
+            if resolved.exists():
+                return str(resolved)
+    return value
+
+
+def resolve_user(explicit: str | None = None) -> str:
+    return explicit or os.environ.get("USER") or "dev"
 
 
 def resolve_namespace(explicit: str | None = None) -> str:
@@ -80,23 +118,30 @@ def resolve_namespace(explicit: str | None = None) -> str:
 
 def resolve_cluster(explicit: str | None = None) -> str:
     if explicit:
-        return explicit
+        return _resolve_catalog_path(explicit, "clusters")
     if os.environ.get("MANIFESTO_CLUSTER"):
-        return os.environ["MANIFESTO_CLUSTER"]
+        return _resolve_catalog_path(os.environ["MANIFESTO_CLUSTER"], "clusters")
     mapping = os.environ.get("MANIFESTO_CLUSTER_MAP", "")
+    context = capture(["kubectl", "config", "current-context"], check=False).strip()
+    kube_cluster = capture(
+        ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].name}"],
+        check=False,
+    ).strip()
     if mapping:
-        context = capture(["kubectl", "config", "current-context"], check=False).strip()
-        kube_cluster = capture(
-            ["kubectl", "config", "view", "--minify", "-o", "jsonpath={.clusters[0].name}"],
-            check=False,
-        ).strip()
         for entry in mapping.split(","):
             key, sep, value = entry.partition("=")
             if sep and key.strip() in {context, kube_cluster}:
-                return value.strip()
+                return _resolve_catalog_path(value.strip(), "clusters")
+    for name in (context, kube_cluster):
+        if not name:
+            continue
+        candidate = _resolve_catalog_path(name, "clusters")
+        if Path(candidate).exists():
+            return candidate
     raise WorkflowError(
         "No cluster profile configured. Pass --cluster, set MANIFESTO_CLUSTER, "
-        "or add the current kube context to MANIFESTO_CLUSTER_MAP.",
+        "add the current kube context to MANIFESTO_CLUSTER_MAP, or create "
+        f"{config_home() / 'clusters' / '<context>.yaml'}.",
         code=2,
     )
 
@@ -104,8 +149,13 @@ def resolve_cluster(explicit: str | None = None) -> str:
 def load_runtime_cluster(config: RuntimeConfig, args):
     if not config.cluster_path:
         raise WorkflowError("No cluster profile configured.", code=2)
-    return load_cluster(config.cluster_path).with_path_overrides(
+    return load_cluster_with_overrides(config.cluster_path, args)
+
+
+def load_cluster_with_overrides(cluster_path: str, args):
+    return load_cluster(cluster_path).with_path_overrides(
         user_root=getattr(args, "user_root", None),
+        log_root=getattr(args, "log_root", None),
         cache_root=getattr(args, "cache_root", None),
         dev_venv=getattr(args, "dev_venv", None),
         dev_source=getattr(args, "dev_source", None),
@@ -123,10 +173,8 @@ def apply_runtime_overrides(spec, args, config: RuntimeConfig) -> None:
 
 def render_manifest(args, config: RuntimeConfig, *, routing_only: bool = False) -> str:
     cluster = load_runtime_cluster(config, args)
-    spec = load_spec(args.spec, cluster)
+    spec = load_spec(resolve_model(args.spec), cluster)
     apply_runtime_overrides(spec, args, config)
-    for warning in collect_warnings(spec):
-        print(f"warning[{warning.code}]: {warning.message}", file=sys.stderr)
     return render_to_yaml(
         render(spec, user=config.user, cluster=cluster, routing_only=routing_only),
         header=manifest_header(args, config, routing_only=routing_only),
@@ -139,7 +187,7 @@ def manifest_header(args, config: RuntimeConfig, *, routing_only: bool) -> list[
     command = [
         "manifesto",
         "render-routing" if routing_only else "render",
-        args.spec,
+        resolve_model(args.spec),
         "--cluster",
         config.cluster_path,
         "--namespace",
@@ -149,7 +197,7 @@ def manifest_header(args, config: RuntimeConfig, *, routing_only: bool) -> list[
     ]
     if getattr(args, "dev", False):
         command.append("--dev")
-    for name in ("user_root", "cache_root", "dev_venv", "dev_source"):
+    for name in ("user_root", "log_root", "cache_root", "dev_venv", "dev_source"):
         value = getattr(args, name, None)
         if value:
             command.extend([f"--{name.replace('_', '-')}", value])
@@ -204,23 +252,40 @@ def delete_file(args) -> int:
 
 
 def ready(args) -> int:
-    config = RuntimeConfig.from_args(args)
-    spec = load_spec(args.spec)
+    config = RuntimeConfig.from_args(args, require_cluster=False)
+    spec = load_spec(resolve_model(args.spec))
     instance = Instance(user=config.user, release=spec.release)
-    selector = f"app.kubernetes.io/instance={instance.instance_id}"
     epp = instance.name("infpool-epp")
-    gateway = instance.name("inference-gateway-istio")
+    routing_enabled = spec.routing.kind != RoutingKind.DISABLED
+
+    gateway = ""
+    if routing_enabled:
+        cluster = load_cluster_with_overrides(resolve_cluster(config.cluster_path), args)
+        gateway_name = instance.name("gateway", max_length=63 - len(cluster.gateway.class_name) - 1)
+        gateway = f"{gateway_name}-{cluster.gateway.class_name}"
 
     print("Waiting for model pods and endpoint picker...")
     waits = [
-        [*config.kubectl(), "wait", "--for=condition=Ready", "pod", "-l", f"{selector},llm-d.ai/role=decode", "--timeout=1200s"],
-        [*config.kubectl(), "wait", "--for=condition=Ready", "pod", "-l", f"{selector},llm-d.ai/role=prefill", "--timeout=1200s"],
-        [*config.kubectl(), "wait", "--for=condition=Available", f"deploy/{epp}", "--timeout=120s"],
+        [
+            *config.kubectl(),
+            "wait",
+            "--for=condition=Ready",
+            "pod",
+            "-l",
+            ",".join(f"{key}={value}" for key, value in instance.pod_selector(role.name).items()),
+            "--timeout=1200s",
+        ]
+        for role in spec.roles
     ]
+    if routing_enabled:
+        waits.append([*config.kubectl(), "wait", "--for=condition=Available", f"deploy/{epp}", "--timeout=120s"])
     procs = [subprocess.Popen(cmd) for cmd in waits]
     rc = max(proc.wait() for proc in procs)
     if rc:
         return rc
+    if not routing_enabled:
+        print("Ready.")
+        return 0
 
     print("Checking gateway...")
     url = f"http://{gateway}:80/v1/models"
@@ -247,7 +312,12 @@ def run(cmd: list[str], *, input_text: str | None = None) -> int:
 
 
 def capture(cmd: list[str], *, check: bool = True) -> str:
-    proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except FileNotFoundError:
+        if check:
+            raise WorkflowError(f"command not found: {cmd[0]}")
+        return ""
     if check and proc.returncode != 0:
         raise WorkflowError(proc.stderr.strip() or f"command failed ({proc.returncode}): {shlex.join(cmd)}")
     return proc.stdout

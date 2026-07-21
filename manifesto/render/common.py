@@ -20,3 +20,10 @@ def secret_env(name: str, secret_name: str, key: str, *, optional: bool = True) 
             }
         },
     }
+
+
+def field_ref_env(name: str, field_path: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "valueFrom": {"fieldRef": {"fieldPath": field_path}},
+    }

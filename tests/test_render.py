@@ -1,6 +1,5 @@
 """Structural tests for rendered Kubernetes objects and YAML serialization."""
 
-from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -8,6 +7,7 @@ import yaml
 from manifesto.cluster import load_cluster
 from manifesto.images import DEFAULT_IMAGES
 from manifesto.render import render, render_to_yaml
+from manifesto.render.devpod import render_dev_pod
 from manifesto.spec import load_spec
 
 
@@ -46,6 +46,54 @@ def test_rendered_launch_script_uses_literal_yaml_block():
     assert "\\nexec vllm serve" not in rendered
 
 
+def test_nixl_roles_advertise_their_pod_ip():
+    objects = _objects(DEEPSEEK)
+
+    for role in ("decode", "prefill"):
+        workload = _find(objects, "LeaderWorkerSet", role)
+        container = workload["spec"]["leaderWorkerTemplate"]["workerTemplate"][
+            "spec"
+        ]["containers"][0]
+        env = {item["name"]: item for item in container["env"]}
+
+        assert env["VLLM_NIXL_SIDE_CHANNEL_HOST"] == {
+            "name": "VLLM_NIXL_SIDE_CHANNEL_HOST",
+            "valueFrom": {"fieldRef": {"fieldPath": "status.podIP"}},
+        }
+
+
+def test_explicit_nixl_side_channel_host_is_preserved():
+    spec = load_spec(ROOT / "models" / DEEPSEEK, CLUSTER)
+    spec.role("decode").env["VLLM_NIXL_SIDE_CHANNEL_HOST"] = "nixl.example.test"
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    workload = _find(objects, "LeaderWorkerSet", "decode")
+    container = workload["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"][
+        "containers"
+    ][0]
+    matching = [
+        item
+        for item in container["env"]
+        if item["name"] == "VLLM_NIXL_SIDE_CHANNEL_HOST"
+    ]
+
+    assert matching == [{"name": "VLLM_NIXL_SIDE_CHANNEL_HOST", "value": "nixl.example.test"}]
+
+
+def test_non_nixl_role_does_not_get_side_channel_host():
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    spec.role("decode").kv_transfer_config = {
+        "kv_connector": "LMCacheConnectorV1",
+    }
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    workload = _find(objects, "Deployment", "decode")
+    container = workload["spec"]["template"]["spec"]["containers"][0]
+
+    assert not any(
+        item["name"] == "VLLM_NIXL_SIDE_CHANNEL_HOST"
+        for item in container["env"]
+    )
+
+
 def test_dp_ports_feed_container_readiness_and_inferencepool():
     objects = _objects(DEEPSEEK)
     lws = _find(objects, "LeaderWorkerSet", "decode")
@@ -53,6 +101,8 @@ def test_dp_ports_feed_container_readiness_and_inferencepool():
     infpool = _find(objects, "InferencePool")
 
     assert [p["containerPort"] for p in container["ports"]] == [8100, 8200, 8201, 8202, 8203]
+    assert container["resources"]["requests"]["cpu"] == "32"
+    assert container["resources"]["requests"]["memory"] == "512Gi"
     readiness = container["readinessProbe"]["exec"]["command"][-1]
     assert "localhost:8000" in readiness
     assert "localhost:8003" in readiness
@@ -103,18 +153,45 @@ def test_logs_persist_to_cluster_log_root():
     volumes = {volume["name"]: volume for volume in pod_spec["volumes"]}
     mounts = {mount["name"]: mount["mountPath"] for mount in container["volumeMounts"]}
 
-    assert volumes["lustre"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
-    assert mounts["lustre"] == "/mnt/lustre"
+    assert volumes["shared-storage"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
+    assert mounts["shared-storage"] == "/mnt/lustre"
     assert "LOG_DIR=/mnt/lustre/tester/logs/decode" in script
 
 
-def test_dedicated_logging_pvc_is_mounted_when_configured():
-    cluster = replace(
-        CLUSTER,
-        logging_pvc="logs-pvc",
-        logging_mount_path="/mnt/logs",
-        log_root_template="/mnt/logs/{user}/{release}",
+def test_shared_storage_accepts_non_pvc_volume_sources():
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.storage.shared_volume = {"emptyDir": {}}
+    spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    lws = _find(objects, "LeaderWorkerSet", "decode")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "shared-storage")
+
+    assert volume == {"name": "shared-storage", "emptyDir": {}}
+
+
+def test_gateway_class_comes_from_cluster_profile():
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.gateway.class_name = "platform-gateway"
+    spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
+    objects = render(spec, user="tester", cluster=cluster)
+    gateway = _find(objects, "Gateway")
+    gateway_options = _find(objects, "ConfigMap", "gateway-options")
+
+    assert gateway["spec"]["gatewayClassName"] == "platform-gateway"
+    assert len(f"{gateway['metadata']['name']}-platform-gateway") <= 63
+    assert not any(
+        obj["kind"] == "Service" and obj["metadata"]["name"].startswith(gateway["metadata"]["name"])
+        for obj in objects
     )
+    assert yaml.safe_load(gateway_options["data"]["service"])["spec"]["type"] == "ClusterIP"
+
+
+def test_dedicated_logging_pvc_is_mounted_when_configured():
+    cluster = CLUSTER.model_copy(deep=True)
+    cluster.logging.pvc = "logs-pvc"
+    cluster.logging.mount_path = "/mnt/logs"
+    cluster.logging.root = "/mnt/logs/{user}/{release}"
     spec = load_spec(ROOT / "models" / DEEPSEEK, cluster)
     objects = render(spec, user="tester", cluster=cluster)
     lws = _find(objects, "LeaderWorkerSet", "decode")
@@ -129,16 +206,38 @@ def test_dedicated_logging_pvc_is_mounted_when_configured():
 
 
 def test_no_dp_qwen_uses_single_port_and_no_dp_flags():
-    objects = _objects("qwen/aggregated.yaml")
-    lws = _find(objects, "LeaderWorkerSet", "decode")
-    container = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]
+    spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
+    spec.role("decode").lws.replicas = 2
+    objects = render(spec, user="tester", cluster=CLUSTER)
+    deployment = _find(objects, "Deployment", "decode")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
     script = container["args"][0]
     infpool = _find(objects, "InferencePool")
 
+    assert not any(obj["kind"] == "LeaderWorkerSet" for obj in objects)
+    assert deployment["spec"]["replicas"] == 2
+    assert deployment["spec"]["selector"]["matchLabels"] == {
+        "app.kubernetes.io/instance": "tester-qwen",
+        "llm-d.ai/role": "decode",
+    }
+    assert deployment["spec"]["template"]["metadata"]["labels"].items() >= deployment["spec"]["selector"][
+        "matchLabels"
+    ].items()
     assert [p["containerPort"] for p in container["ports"]] == [8000]
     assert "--data-parallel-size" not in script
     assert "startupProbe" not in container
     assert infpool["spec"]["targetPorts"] == [{"number": 8000}]
+
+
+def test_single_node_dp_uses_deployment_without_lws_environment():
+    spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
+    objects = render(spec, user="tester", cluster=CKS_H200)
+    deployment = _find(objects, "Deployment", "decode")
+    script = deployment["spec"]["template"]["spec"]["containers"][0]["args"][0]
+
+    assert "LWS_" not in script
+    assert "START_RANK=0" in script
+    assert "--data-parallel-address 127.0.0.1" in script
 
 
 def test_pd_inferencepool_selector_includes_prefill_and_decode_roles():
@@ -210,8 +309,8 @@ def test_cks_h200_cluster_uses_coreweave_cache_and_rdma_settings():
     spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
     assert spec.model.hf_home == "/var/cache/huggingface"
     objects = render(spec, user="tester", cluster=CKS_H200)
-    lws = _find(objects, "LeaderWorkerSet", "decode")
-    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+    deployment = _find(objects, "Deployment", "decode")
+    pod_spec = deployment["spec"]["template"]["spec"]
     container = pod_spec["containers"][0]
     script = container["args"][0]
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
@@ -233,6 +332,28 @@ def test_cks_h200_cluster_uses_coreweave_cache_and_rdma_settings():
     assert "--max-cudagraph-capture-size" not in script
     assert container["resources"]["requests"]["rdma/ib"] == "1"
     assert container["resources"]["limits"]["rdma/ib"] == "1"
+
+
+def test_dev_pod_derives_storage_and_paths_from_cluster_profile():
+    pod = render_dev_pod(CLUSTER, "Tester.Name")
+    container = pod["spec"]["containers"][0]
+    env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
+    volumes = {volume["name"]: volume for volume in pod["spec"]["volumes"]}
+
+    assert pod["metadata"]["name"] == "tester-name-vllm-dev"
+    assert container["image"] == DEFAULT_IMAGES.get("dev.image")
+    assert volumes["shared-storage"]["persistentVolumeClaim"]["claimName"] == "lustre-pvc-vllm"
+    assert container["workingDir"] == "/mnt/lustre/tester-name/vllm-dev"
+    assert env["HF_HOME"] == "/mnt/lustre/hf_cache"
+    assert env["CCACHE_DIR"] == "/mnt/lustre/tester-name/ccache"
+
+    h200_pod = render_dev_pod(CKS_H200, "tester")
+    h200_volumes = {volume["name"]: volume for volume in h200_pod["spec"]["volumes"]}
+    h200_env = {
+        item["name"]: item["value"] for item in h200_pod["spec"]["containers"][0]["env"] if "value" in item
+    }
+    assert h200_volumes["hf-cache"]["hostPath"]["path"] == "/mnt/local/hf-cache"
+    assert h200_env["HF_HOME"] == "/var/cache/huggingface"
 
 
 def test_lws_uses_cluster_routing_sidecar_image():

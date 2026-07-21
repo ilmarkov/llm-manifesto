@@ -13,6 +13,31 @@ def render_service_account(instance: Instance) -> dict:
     }
 
 
+def render_openshift_scc_binding(instance: Instance, *, namespace: str, scc: str) -> dict:
+    service_account_name = instance.name("model-server")
+    return {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": {
+            "name": instance.name("model-server-scc"),
+            "namespace": namespace,
+            "labels": instance.labels("model-server"),
+        },
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": f"system:openshift:scc:{scc}",
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": service_account_name,
+                "namespace": namespace,
+            }
+        ],
+    }
+
+
 def render_dcgm_metrics_configmap(instance: Instance) -> dict:
     return {
         "apiVersion": "v1",

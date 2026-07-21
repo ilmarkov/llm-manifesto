@@ -7,6 +7,7 @@ import pytest
 from manifesto.cluster import load_cluster
 from manifesto.images import DEFAULT_IMAGES
 from manifesto.overrides import merge_overrides
+from manifesto.parallelism import parallel_layout
 from manifesto.spec import load_spec
 
 
@@ -64,16 +65,16 @@ def test_deepseek_v4_llmd_guide_variants_expand(
 
     assert prefill.lws.size == 2
     assert prefill.lws.replicas == prefill_replicas
-    assert prefill.tensor_parallel_size == 1
-    assert prefill.data_parallel.enabled is True
-    assert prefill.data_parallel.local_size == 4
+    assert prefill.parallelism.tp == 1
+    assert prefill.parallelism.dp_enabled is True
+    assert parallel_layout(prefill).dp_local_size == 4
     assert prefill.kv_transfer_config["kv_role"] == "kv_both"
 
     assert decode.lws.size == decode_size
     assert decode.lws.replicas == decode_replicas
-    assert decode.tensor_parallel_size == 1
-    assert decode.data_parallel.enabled is True
-    assert decode.data_parallel.local_size == decode_dp // decode_size
+    assert decode.parallelism.tp == 1
+    assert decode.parallelism.dp_enabled is True
+    assert parallel_layout(decode).dp_local_size == decode_dp // decode_size
     assert decode.kv_transfer_config["kv_role"] == "kv_both"
     if decode_dp == 8:
         assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"

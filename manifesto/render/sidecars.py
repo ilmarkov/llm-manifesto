@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from ..images import DEFAULT_IMAGES, ImageCatalog
+from ..images import DEFAULT_IMAGES
 
 
-def sidecars(
-    names: list[str],
-    *,
-    dcgm_config_name: str = "dcgm-custom-metrics",
-    images: ImageCatalog = DEFAULT_IMAGES,
-) -> tuple[list[dict], list[dict]]:
+def sidecars(names: list[str], *, dcgm_config_name: str = "dcgm-custom-metrics") -> tuple[list[dict], list[dict]]:
     containers: list[dict] = []
     volumes: list[dict] = []
     if "dcgm-exporter" in names:
@@ -23,7 +18,7 @@ def sidecars(
         containers.append(
             {
                 "name": "dcgm-exporter",
-                "image": images.get("sidecars.dcgm_exporter"),
+                "image": DEFAULT_IMAGES.get("sidecars.dcgm_exporter"),
                 "imagePullPolicy": "IfNotPresent",
                 "args": ["-f", "/etc/dcgm-exporter/custom-counters.csv"],
                 "ports": [{"containerPort": 9400, "name": "dcgm", "protocol": "TCP"}],
@@ -48,10 +43,14 @@ def sidecars(
             }
         )
     if "node-exporter" in names:
+        volumes.extend([
+            {"name": "sys", "hostPath": {"path": "/sys", "type": "Directory"}},
+            {"name": "proc", "hostPath": {"path": "/proc", "type": "Directory"}},
+        ])
         containers.append(
             {
                 "name": "node-exporter",
-                "image": images.get("sidecars.node_exporter"),
+                "image": DEFAULT_IMAGES.get("sidecars.node_exporter"),
                 "imagePullPolicy": "IfNotPresent",
                 "args": [
                     "--collector.disable-defaults",

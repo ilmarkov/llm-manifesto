@@ -23,9 +23,9 @@ The repository contains:
 - `manifesto/` - Python renderer implementation and CLI.
 - `models/` - Model deployment specs.
 - `clusters/` - Cluster profiles.
-- `dev/` - Persistent CPU-only pod for building vLLM from source on Lustre.
+- `dev/` - Dev image Containerfile; the persistent dev pod for building vLLM
+  from source is rendered by `manifesto render-dev-pod`.
 - `monitoring/` - Namespace-scoped Prometheus and Grafana stack.
-- `scripts/` - Operational helper scripts.
 - `tests/` - Renderer, validation, and UX regression tests.
 
 ## Architecture
@@ -33,7 +33,7 @@ The repository contains:
 Manifesto takes a model spec and a cluster profile, then emits raw Kubernetes
 objects:
 
-- LeaderWorkerSet model-server workloads.
+- Deployment or LeaderWorkerSet model-server workloads, depending on node count.
 - InferencePool and endpoint picker deployment.
 - Gateway API and HTTPRoute objects.
 - Per-pod monitoring sidecars.

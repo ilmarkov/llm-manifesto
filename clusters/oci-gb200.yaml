@@ -3,7 +3,10 @@ name: oci-gb200
 gpus_per_node: 4
 
 storage:
-  lustre_pvc: lustre-pvc-vllm
+  shared_volume:
+    persistentVolumeClaim:
+      claimName: lustre-pvc-vllm
+  shared_mount_path: /mnt/lustre
   local_nvme_path: /mnt/numa0
 
 logging:
@@ -14,9 +17,13 @@ logging:
 pod_defaults:
   shm_size: 2Gi
 
+model_server_resources:
+  cpu_per_gpu: "8"
+  memory_per_gpu: 128Gi
+
 paths:
   user_root: /mnt/lustre/{user}
-  cache_root: /mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{vllm_version}/{release}
+  cache_root: /mnt/lustre/{user}/jit-cache/{gpu_arch}/{cuda}/{cache_key}/{release}
 
 dev:
   venv: /mnt/lustre/{user}/vllm-venv

@@ -1,6 +1,6 @@
 # Central image catalog. Use image_ref values such as "vllm.standard" in specs.
 vllm:
-  standard: vllm/vllm-openai:v0.24.0
+  standard: vllm/vllm-openai:v0.25.1
 
 llm_d:
   release: v0.8.0
