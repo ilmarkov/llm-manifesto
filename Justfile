@@ -450,8 +450,9 @@ load-dashboards:
   for f in "{{MONITORING_DIR}}"/*.json; do
     [ -f "$f" ] || continue
     NAME=$(basename "$f" .json)
-    echo "Creating ConfigMap for dashboard: $NAME"
-    {{KN}} create configmap "grafana-dashboard-$NAME" --from-file="$NAME.json=$f" --dry-run=client -o yaml | \
+    CM_NAME=$(printf 'grafana-dashboard-%s' "$NAME" | tr '[:upper:]' '[:lower:]')
+    echo "Creating ConfigMap for dashboard: $NAME ($CM_NAME)"
+    {{KN}} create configmap "$CM_NAME" --from-file="$NAME.json=$f" --dry-run=client -o yaml | \
       {{KN}} label -f - --local -o yaml grafana_dashboard=1 | \
       {{KN}} apply -f -
   done
