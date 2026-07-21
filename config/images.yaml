@@ -1,6 +1,8 @@
 # Central image catalog. Use image_ref values such as "vllm.standard" in specs.
 vllm:
   standard: vllm/vllm-openai:v0.25.1
+  # InferenceX PR #2260 GB200 AgentX pin (canonical DeepSeek-V4-Pro checkpoint).
+  ix: vllm/vllm-openai:nightly-dev-arm64-cu13.0.1-c188b96
 
 llm_d:
   release: v0.8.0

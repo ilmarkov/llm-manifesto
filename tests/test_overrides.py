@@ -136,3 +136,61 @@ def test_deepseek_v4_ep16_decode_inherits_deepep_v2():
 
     assert decode.vllm_args["all2all_backend"] == "deepep_v2"
     assert decode.vllm_args["enable_eplb"] is True
+
+
+@pytest.mark.parametrize(
+    (
+        "config",
+        "prefill_replicas",
+        "decode_size",
+        "decode_dp",
+        "prefill_max_seqs",
+        "decode_max_seqs",
+        "decode_cudagraph",
+    ),
+    [
+        ("deepseek-v4-ix/1P-EP8-1D-EP8.yaml", 1, 2, 8, 128, 64, 64),
+        ("deepseek-v4-ix/1P-EP8-1D-EP12.yaml", 1, 3, 12, 256, 128, 128),
+        ("deepseek-v4-ix/2P-EP8-1D-EP12.yaml", 2, 3, 12, 192, 128, 128),
+        ("deepseek-v4-ix/3P-EP8-1D-EP16.yaml", 3, 4, 16, 214, 160, 160),
+    ],
+)
+def test_deepseek_v4_ix_disagg_variants_expand(
+    config: str,
+    prefill_replicas: int,
+    decode_size: int,
+    decode_dp: int,
+    prefill_max_seqs: int,
+    decode_max_seqs: int,
+    decode_cudagraph: int,
+):
+    spec = load_spec(ROOT / "models" / config, CLUSTER)
+    decode = spec.role("decode")
+    prefill = spec.role("prefill")
+
+    assert spec.topology == "pd"
+    assert spec.model.image == DEFAULT_IMAGES.get("vllm.ix")
+    assert prefill.lws.replicas == prefill_replicas
+    assert decode.lws.size == decode_size
+    assert decode.parallelism.dp_size == decode_dp
+    assert prefill.vllm_args["max_num_seqs"] == prefill_max_seqs
+    assert decode.vllm_args["max_num_seqs"] == decode_max_seqs
+    assert decode.vllm_args["max_cudagraph_capture_size"] == decode_cudagraph
+    assert prefill.kv_transfer_config["kv_connector"] == "MultiConnector"
+    assert prefill.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
+    assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
+    assert "all2all_backend" not in decode.vllm_args
+    assert "enable_eplb" not in decode.vllm_args
+
+
+def test_deepseek_v4_ix_agg_tp8():
+    spec = load_spec(ROOT / "models" / "deepseek-v4-ix" / "agg-tp8.yaml", CLUSTER)
+    decode = spec.role("decode")
+
+    assert spec.topology == "aggregated"
+    assert decode.parallelism.tp == 8
+    assert decode.parallelism.dp_enabled is False
+    assert decode.lws.size == 2
+    assert decode.kv_transfer_config["kv_connector"] == "MooncakeStoreConnector"
+    assert decode.vllm_args["max_num_seqs"] == 32
+    assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "0"

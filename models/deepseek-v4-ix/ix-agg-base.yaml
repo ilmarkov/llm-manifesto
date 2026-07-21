@@ -1,0 +1,73 @@
+# InferenceX PR #2260 aggregate TP8 base — one worker spanning 2×4-GPU nodes.
+topology: aggregated
+
+model:
+  id: deepseek-ai/DeepSeek-V4-Pro
+  label: DeepSeek-V4-Pro-IX
+  image_ref: vllm.ix
+  served_name: deepseek-ai/DeepSeek-V4-Pro
+
+routing: {kind: load_aware, target_role: decode}
+runtime: {sidecars: [dcgm-exporter, node-exporter]}
+
+roles:
+  - name: decode
+    workload_name: vllm-tp8-agg
+    lws: {size: 2, replicas: 1}
+    parallelism: {tp: 8, dp: false, ep: false, gpus: 4}
+    kv_transfer_config:
+      kv_connector: MooncakeStoreConnector
+      kv_role: kv_both
+      kv_connector_extra_config:
+        load_async: true
+        lookup_async: true
+        enable_offload: false
+    env:
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      VLLM_USE_RUST_FRONTEND: "1"
+      VLLM_SERVER_DEV_MODE: "1"
+      VLLM_USE_NCCL_SYMM_MEM: "0"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_RPC_TIMEOUT: "600000"
+      VLLM_MOONCAKE_LOAD_RECV_THREADS: "4"
+      VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
+      VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
+      VLLM_DSV4_MEGA_FP8_COMBINE: "1"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+      VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "1024"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      TORCH_SYMMMEM: NVSHMEM
+      DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
+      UCX_MEMTYPE_CACHE: "n"
+      UCX_MEMTYPE_REG_WHOLE: "n"
+      UCX_RCACHE_MAX_UNRELEASED: "1024"
+      UCX_TLS: cuda_copy,cuda_ipc,tcp
+      NCCL_CUMEM_ENABLE: "1"
+      NCCL_MNNVL_ENABLE: "1"
+      NCCL_NVLS_ENABLE: "1"
+      NCCL_P2P_LEVEL: NVL
+      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
+    resources:
+      ephemeral_storage: 128Gi
+    vllm:
+      load_format: auto
+      trust_remote_code: true
+      kv_cache_dtype: fp8
+      block_size: 256
+      enable_cumem_allocator: true
+      no_disable_hybrid_kv_cache_manager: true
+      no_enable_flashinfer_autotune: true
+      tokenizer_mode: deepseek_v4
+      max_model_len: 1048576
+      max_num_seqs: 32
+      max_num_batched_tokens: 8192
+      max_cudagraph_capture_size: 32
+      gpu_memory_utilization: "0.95"
+      kv_cache_memory: 37580963840
+      stream_interval: 10
+      attention_config:
+        backend: FLASHINFER_MLA_SPARSE_DSV4
+        use_prefill_query_quantization: true
+        use_fp4_indexer_cache: true
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
