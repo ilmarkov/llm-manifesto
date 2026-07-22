@@ -111,7 +111,8 @@ def _base_env(spec: DeploymentSpec, cache_prefix: str, *, dev_venv: str, platfor
 
 
 def _resource_claims(cluster: Cluster, fabric_profile: str) -> list[dict[str, str]]:
-    if cluster.fabric.imex_resource_claim_template and fabric_profile.startswith("deepep"):
+    profile_config = cluster.fabric.profiles.get(fabric_profile)
+    if cluster.fabric.imex_resource_claim_template and profile_config and profile_config.requires_imex:
         return [
             {
                 "name": "compute-domain-channel",

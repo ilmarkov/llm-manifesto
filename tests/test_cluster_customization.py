@@ -151,6 +151,39 @@ def test_role_can_override_cluster_fabric_profile():
     assert resolved.env["CUSTOM_FABRIC_MODE"] == "enabled"
 
 
+def test_resource_claim_attachment_is_driven_by_requires_imex_flag_not_profile_name():
+    # A profile requesting multi-node NVLink must declare requires_imex to get the
+    # IMEX device claim -- regardless of what it's named. Naming it "megamoe"
+    # (instead of "deepep_*") must not silently drop the claim.
+    cluster = _custom_cluster()
+    cluster.fabric.imex_resource_claim_template = "llm-d-dev-claim"
+    cluster.fabric.profiles["megamoe"] = cluster.fabric.profiles["standard"].model_copy(
+        update={"env": {"NCCL_MNNVL_ENABLE": "1"}, "requires_imex": True}
+    )
+    spec = _spec(cluster)
+    role = spec.roles[0]
+    role.fabric_profile = "megamoe"
+
+    resolved = resolve_role(spec, Instance(user="tester", release=spec.release), cluster, role)
+
+    assert resolved.env["NCCL_MNNVL_ENABLE"] == "1"
+    assert resolved.resource_claims == [
+        {"name": "compute-domain-channel", "resourceClaimTemplateName": "llm-d-dev-claim"}
+    ]
+
+
+def test_resource_claim_skipped_when_profile_does_not_require_imex():
+    cluster = _custom_cluster()
+    cluster.fabric.imex_resource_claim_template = "llm-d-dev-claim"
+    spec = _spec(cluster)
+    role = spec.roles[0]
+    role.fabric_profile = "standard"
+
+    resolved = resolve_role(spec, Instance(user="tester", release=spec.release), cluster, role)
+
+    assert resolved.resource_claims == []
+
+
 def test_shared_storage_defaults_hf_home_without_local_nvme():
     cluster = _custom_cluster()
     spec = _spec(cluster)

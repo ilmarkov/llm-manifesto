@@ -44,8 +44,12 @@ def test_fabric_profiles_are_cluster_config_driven():
 
     assert decode.fabric_profile == "deepep_decode"
     assert decode.env["NCCL_MNNVL_ENABLE"] == "1"
+    assert decode.resource_claims == [
+        {"name": "compute-domain-channel", "resourceClaimTemplateName": "llm-d-dev-claim"}
+    ]
     assert standard.fabric_profile == "standard"
     assert "NCCL_MNNVL_ENABLE" not in standard.env
+    assert standard.resource_claims == []
 
 
 def test_dp_is_global_and_local_dp_is_derived_from_lws_size():

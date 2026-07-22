@@ -114,6 +114,10 @@ class FabricProfileConfig(BaseModel):
 
     env: dict[str, Any] = Field(default_factory=dict)
     computed_env: dict[str, Any] = Field(default_factory=dict)
+    # Profiles that rely on multi-node NVLink (NCCL_MNNVL_ENABLE / NVSHMEM) need the
+    # cluster's IMEX device claim attached, or ncclCommInitRank fails with
+    # "unhandled system error" the moment a cross-node NCCL group forms.
+    requires_imex: bool = False
 
 
 class FabricConfig(BaseModel):

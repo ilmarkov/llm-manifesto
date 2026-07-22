@@ -5,7 +5,8 @@ topology: pd
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
-  image_ref: vllm.ix
+  # image_ref: vllm.ix
+  image_ref: vllm.standard
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: pd, target_role: decode}
@@ -16,25 +17,31 @@ roles:
     workload_name: vllm-ep16-decode
     lws: {size: 4, replicas: 1}
     parallelism: {tp: 1, dp: 16, ep: true}
+    fabric_profile: megamoe
     kv_transfer_config:
-      kv_connector: MultiConnector
+      kv_connector: NixlConnector
       kv_role: kv_both
-      kv_connector_extra_config:
-        connectors:
-          - kv_connector: NixlConnector
-            kv_role: kv_both
-            kv_load_failure_policy: fail
-            kv_buffer_device: cuda
-            kv_connector_extra_config:
-              enforce_handshake_compat: false
-              enable_cross_layers_blocks: false
-          - kv_connector: MooncakeStoreConnector
-            kv_role: kv_both
-            kv_connector_extra_config:
-              load_async: true
-              lookup_async: true
-              enable_cross_layers_blocks: false
-              enable_offload: false
+      kv_buffer_device: cuda
+      kv_load_failure_policy: fail
+    # Mooncake disabled until store config + master are wired for Kubernetes.
+    # kv_connector: MultiConnector
+    # kv_role: kv_both
+    # kv_connector_extra_config:
+    #   connectors:
+    #     - kv_connector: NixlConnector
+    #       kv_role: kv_both
+    #       kv_load_failure_policy: fail
+    #       kv_buffer_device: cuda
+    #       kv_connector_extra_config:
+    #         enforce_handshake_compat: false
+    #         enable_cross_layers_blocks: false
+    #     - kv_connector: MooncakeStoreConnector
+    #       kv_role: kv_both
+    #       kv_connector_extra_config:
+    #         load_async: true
+    #         lookup_async: true
+    #         enable_cross_layers_blocks: false
+    #         enable_offload: false
     env:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_SERVER_DEV_MODE: "1"
@@ -43,20 +50,15 @@ roles:
       VLLM_RPC_TIMEOUT: "600000"
       VLLM_LOG_STATS_INTERVAL: "1"
       VLLM_V2_WARMUP_MAX_NUM_SEQS: "20"
-      VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
+      # VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
       VLLM_ALLREDUCE_USE_SYMM_MEM: "0"
       TILELANG_CLEANUP_TEMP_FILES: "1"
-      TORCH_SYMMMEM: NVSHMEM
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
-      UCX_MEMTYPE_CACHE: "n"
       UCX_TLS: rc,cuda_copy
-      NCCL_CUMEM_ENABLE: "1"
-      NCCL_MNNVL_ENABLE: "1"
-      NCCL_NVLS_ENABLE: "1"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
-      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
+      # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
     vllm:
@@ -84,26 +86,32 @@ roles:
     workload_name: vllm-ep8-prefill
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 1, dp: 8, ep: true}
+    fabric_profile: megamoe
     dp_load_balancing: external
     kv_transfer_config:
-      kv_connector: MultiConnector
+      kv_connector: NixlConnector
       kv_role: kv_both
-      kv_connector_extra_config:
-        connectors:
-          - kv_connector: NixlConnector
-            kv_role: kv_both
-            kv_load_failure_policy: fail
-            kv_buffer_device: cuda
-            kv_connector_extra_config:
-              enforce_handshake_compat: false
-              enable_cross_layers_blocks: false
-          - kv_connector: MooncakeStoreConnector
-            kv_role: kv_both
-            kv_connector_extra_config:
-              load_async: true
-              lookup_async: true
-              enable_cross_layers_blocks: false
-              enable_offload: false
+      kv_buffer_device: cuda
+      kv_load_failure_policy: fail
+    # Mooncake disabled until store config + master are wired for Kubernetes.
+    # kv_connector: MultiConnector
+    # kv_role: kv_both
+    # kv_connector_extra_config:
+    #   connectors:
+    #     - kv_connector: NixlConnector
+    #       kv_role: kv_both
+    #       kv_load_failure_policy: fail
+    #       kv_buffer_device: cuda
+    #       kv_connector_extra_config:
+    #         enforce_handshake_compat: false
+    #         enable_cross_layers_blocks: false
+    #     - kv_connector: MooncakeStoreConnector
+    #       kv_role: kv_both
+    #       kv_connector_extra_config:
+    #         load_async: true
+    #         lookup_async: true
+    #         enable_cross_layers_blocks: false
+    #         enable_offload: false
     env:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_SERVER_DEV_MODE: "1"
@@ -112,23 +120,18 @@ roles:
       VLLM_RPC_TIMEOUT: "600000"
       VLLM_LOG_STATS_INTERVAL: "1"
       VLLM_V2_WARMUP_MAX_NUM_SEQS: "20"
-      VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
-      VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
-      VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
+      # VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
+      # VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
+      # VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
       VLLM_ALLREDUCE_USE_SYMM_MEM: "0"
       TILELANG_CLEANUP_TEMP_FILES: "1"
-      TORCH_SYMMMEM: NVSHMEM
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
-      UCX_MEMTYPE_CACHE: "n"
       UCX_TLS: rc,cuda_copy
-      NCCL_CUMEM_ENABLE: "1"
-      NCCL_MNNVL_ENABLE: "1"
-      NCCL_NVLS_ENABLE: "1"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
       VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
-      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
+      # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
     vllm:

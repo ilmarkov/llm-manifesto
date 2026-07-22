@@ -44,6 +44,7 @@ fabric:
   profiles:
     standard: {}
     deepep_decode:
+      requires_imex: true
       env:
         VLLM_USE_NCCL_SYMM_MEM: "1"
         NCCL_CUMEM_ENABLE: "1"
@@ -56,6 +57,7 @@ fabric:
       computed_env:
         NVSHMEM_QP_DEPTH: max_concurrency * 2 + 2
     deepep_prefill:
+      requires_imex: true
       env:
         VLLM_USE_NCCL_SYMM_MEM: "1"
         NCCL_CUMEM_ENABLE: "1"
@@ -64,3 +66,15 @@ fabric:
         NCCL_NVLS_ENABLE: "0"
         VLLM_DEEPEP_HIGH_THROUGHPUT_FORCE_INTRA_NODE: "1"
         VLLM_USE_DEEP_GEMM: "1"
+    # For InferenceX's deep_gemm_mega_moe backend: no DeepEP all2all dispatch, but
+    # MegaMoE's combine step and cross-node allreduce still ride NCCL symmetric
+    # memory over multi-node NVLink, so it needs the same IMEX channel access as
+    # the deepep_* profiles. -ix model specs opt in with `fabric_profile: megamoe`.
+    megamoe:
+      requires_imex: true
+      env:
+        NCCL_CUMEM_ENABLE: "1"
+        NCCL_MNNVL_ENABLE: "1"
+        NCCL_NVLS_ENABLE: "1"
+        TORCH_SYMMMEM: NVSHMEM
+        UCX_MEMTYPE_CACHE: "n"

@@ -22,7 +22,20 @@ def _literal_string_representer(dumper: yaml.SafeDumper, data: LiteralString) ->
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
 
 
+# Go's YAML 1.1 parser (used by kubectl) treats y/Y/n/N as booleans,
+# but PyYAML's SafeDumper doesn't quote them.  Force single-quote style
+# so kubectl won't misinterpret string env-var values as bool.
+_GO_YAML_BOOLEANS = frozenset({"y", "Y", "n", "N"})
+
+
+def _str_representer(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
+    if data in _GO_YAML_BOOLEANS:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="'")
+    return dumper.represent_str(data)
+
+
 yaml.SafeDumper.add_representer(LiteralString, _literal_string_representer)
+yaml.SafeDumper.add_representer(str, _str_representer)
 
 
 def _literal_multiline_strings(value):

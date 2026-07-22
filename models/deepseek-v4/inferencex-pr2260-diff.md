@@ -9,16 +9,49 @@ PR #2260 adds GB200 AgentX srt-slurm recipes under `benchmarks/multi_node/srt-sl
 
 ## Topology mapping
 
-| Local config | Nodes / GPUs | PR recipe (closest match) | Nodes / GPUs | Match quality |
-|---|---:|---|---:|---|
-| *(none)* | — | `agg-gb200-tp8-agentic.yaml` | 2 / 8 (TP8 aggregate) | **PR only** — no local aggregate recipe |
-| `1P-EP8-1D-EP8.yaml` | 4 / 16 | `disagg-gb200-1p1d-dep8-dep8-agentic.yaml` | 4 / 16 | **Strong** — same P/D worker counts and DEP8/DEP8 |
-| *(none)* | — | `disagg-gb200-1p1d-dep8-dep12-agentic.yaml` | 5 / 20 | **PR only** — DEP12 decode |
-| `2P-EP8-1D-EP8.yaml` | 6 / 24 | `disagg-gb200-2p1d-dep8-dep12-agentic.yaml` | 7 / 28 | **Partial** — same 2P prefill count; decode EP differs (EP8 vs EP12) and GPU count differs |
-| `3P-EP8-1D-EP8.yaml` | 8 / 32 | *(no PR recipe)* | — | **Local only** |
-| `3P-EP8-1D-EP16.yaml` | 10 / 40 | `disagg-gb200-3p1d-dep8-dep16-agentic.yaml` | 10 / 40 | **Strong** — same 3P EP8 + 1D EP16 layout |
+Concurrencies come from PR `configs/nvidia-master.yaml` → `scenarios.agentic-coding[].conc-list` (scenario: **agentic-coding**, spec-decoding: **none**). Local manifests do not define benchmark conc lists; `wide-ep-base.yaml` sets a serving ceiling via `vars.max_concurrency: 1024`.
 
-**Summary:** PR covers aggregate TP8 and adds a DEP12 decode tier we do not model locally. We have two local topologies (2P/1D EP8/EP8 and 3P/1D EP8/EP8) with no PR counterpart.
+| Local config | Local nodes / GPUs | PR recipe | PR master-config key | PR conc-list | PR nodes / GPUs | Match quality |
+|---|---:|---|---|---|---:|---|
+| *(none)* | — | `agg-gb200-tp8-agentic.yaml` | `dsv4-fp4-gb200-dynamo-vllm-agentic-agg` | 1, 4, 8, 16 | 2 / 8 (TP8 aggregate) | **PR only** — no local aggregate recipe |
+| `1P-EP8-1D-EP8.yaml` | 4 / 16 | `disagg-gb200-1p1d-dep8-dep8-agentic.yaml` | `dsv4-fp4-gb200-dynamo-vllm-agentic-1p1d-dep8-dep8` | 64, 128, 192, 256 | 4 / 16 | **Strong** — same P/D worker counts and DEP8/DEP8 |
+| *(none)* | — | `disagg-gb200-1p1d-dep8-dep12-agentic.yaml` | `dsv4-fp4-gb200-dynamo-vllm-agentic-1p1d-dep8-dep12` | 384, 512 | 5 / 20 | **PR only** — DEP12 decode |
+| `2P-EP8-1D-EP8.yaml` | 6 / 24 | `disagg-gb200-2p1d-dep8-dep12-agentic.yaml` | `dsv4-fp4-gb200-dynamo-vllm-agentic-2p1d-dep8-dep12` | 640, 720, 768 | 7 / 28 | **Partial** — same 2P prefill count; decode EP differs (EP8 vs EP12) and GPU count differs |
+| `3P-EP8-1D-EP8.yaml` | 8 / 32 | *(no PR recipe)* | — | — | — | **Local only** |
+| `3P-EP8-1D-EP16.yaml` | 10 / 40 | `disagg-gb200-3p1d-dep8-dep16-agentic.yaml` | `dsv4-fp4-gb200-dynamo-vllm-agentic-3p1d-dep8-dep16` | 800, 960, 1024, 1280 | 10 / 40 | **Strong** — same 3P EP8 + 1D EP16 layout |
+
+**Summary:** PR sweeps low concurrency on aggregate TP8, mid/high on smaller disagg topologies, and up to 1280 on the largest 3P/1D EP16 layout. We have two local topologies (2P/1D EP8/EP8 and 3P/1D EP8/EP8) with no PR counterpart.
+
+### Scheduler limits vs benchmark `conc-list` (all PR disagg topologies)
+
+`max-num-batched-tokens` is **8192 on every prefill** and **256 on every decode** in PR #2260. Values below are from the recipe YAMLs at `a7b253a`.
+
+| Topology | `conc-list` | P `max-seqs` | P `max-batched` | D `max-seqs` | D `max-batched` | Caps vs max conc |
+|---|---:|---:|---:|---:|---:|---|
+| 1P/1D DEP8/DEP8 | 64–256 | 128 | 8192 | 64 | 256 | P seqs OK ≤128; **fails at conc 192, 256**; D seqs fail at conc ≥64 |
+| **1P/1D DEP8/DEP12** | **384, 512** | **256** | **8192** | **128** | **256** | **P seqs fail at conc 384, 512**; D seqs fail at conc ≥128 |
+| 2P/1D DEP8/DEP12 | 640–768 | 192 | 8192 | 128 | 256 | All caps below min conc |
+| 3P/1D DEP8/DEP16 | 800–1280 | 214 | 8192 | 160 | 256 | All caps below min conc |
+
+So for **1P/1D DEP8/DEP12** specifically: our `deepseek-v4-ix` manifests **match the PR** on `max-num-batched-tokens`, but the PR itself pairs high benchmark conc (**384/512**) with fixed batched-token budgets identical to the DEP8/DEP8 tier and `max-num-seqs` below the lowest conc point. That is likely what looks inconsistent — it is in the InferenceX recipe/master-config pairing, not a transcription error in `deepseek-v4-ix/`.
+
+### `perf-changelog.yaml` description vs actual `conc-list`
+
+PR #2260 appends a changelog entry whose `description` still lists **stale** concurrency values. The **`nvidia-master.yaml` `conc-list` fields are authoritative** for what CI actually sweeps.
+
+| Topology | `perf-changelog.yaml` description | Actual `nvidia-master.yaml` `conc-list` | Match? |
+|---|---|---|---|
+| Agg TP8 | 1, 4, 8, 16 | 1, 4, 8, 16 | ✓ |
+| 1P/1D DEP8/DEP8 | 64, 128, **256, 320** | 64, 128, **192, 256** | ✗ |
+| 1P/1D DEP8/DEP12 | **128, 256, 320** | **384, 512** | ✗ |
+| 2P/1D DEP8/DEP12 | **480**, 640, **768** | 640, **720**, 768 | ✗ |
+| 3P/1D DEP8/DEP16 | **640**, 800, 960, 1280 | 800, 960, **1024**, 1280 | ✗ |
+
+Changelog text (PR `perf-changelog.yaml`):
+
+> Add GB200 Dynamo-vLLM AgentX aggregate TP8 at conc [1,4,8,16] and disaggregated topologies: 1P/1D DEP8/DEP8 at [64,128,256,320], 1P/1D DEP8/DEP12 at [128,256,320], 2P/1D DEP8/DEP12 at [480,640,768], and 3P/1D DEP8/DEP16 at [640,800,960,1280].
+
+Likely cause: the description was written from an earlier tuning iteration (commit `453e342` / `a94e310` adjusted conc lists) and not updated when `nvidia-master.yaml` changed. **Treat the topology mapping table above, not the changelog prose, as the source of truth.**
 
 ---
 
@@ -33,7 +66,7 @@ PR #2260 adds GB200 AgentX srt-slurm recipes under `benchmarks/multi_node/srt-sl
 - **MultiConnector KV path** (disagg) — `NixlConnector` + `MooncakeStoreConnector` in one `kv-transfer-config`.
 - **Dynamo frontend** — `router-mode: kv`, `tokenizer: fastokens` (disagg), health/Slurm integration.
 - **Agentic benchmark env** — `AIPERF_*`, `WEKA_LOADER_OVERRIDE`, `agentic_srt.sh` command.
-- **Master-config conc lists** — e.g. agg `[1,4,8,16]`, 1P/1D EP8/EP8 `[64,128,192,256]`, etc.
+- **Master-config conc lists** — see topology mapping table; changelog description is stale (four of five disagg topologies wrong).
 
 ### Only in local `llm-manifesto`
 
@@ -91,6 +124,19 @@ PR #2260 adds GB200 AgentX srt-slurm recipes under `benchmarks/multi_node/srt-sl
 | Decode GPU util | 0.85 | 0.95 |
 | Decode MoE | `deep_gemm_mega_moe` | PR: `deep_gemm_amxf4_mega_moe` (invalid upstream name) |
 | KV connector | Nixl only | MultiConnector (Nixl + Mooncake) |
+
+### 1P / 1D EP8 / EP12
+
+| Setting | PR (`disagg-gb200-1p1d-dep8-dep12-agentic`) | `deepseek-v4-ix/1P-EP8-1D-EP12.yaml` | Match? |
+|---|---|---|---|
+| Benchmark `conc-list` | 384, 512 | *(comment only)* | — |
+| Prefill `max-num-seqs` | 256 | 256 | ✓ |
+| Prefill `max-num-batched-tokens` | 8192 | 8192 *(from `ix-disagg-base`)* | ✓ |
+| Decode `max-num-seqs` | 128 | 128 | ✓ |
+| Decode `max-num-batched-tokens` | 256 | 256 *(from `ix-disagg-base`)* | ✓ |
+| Decode `max-cudagraph-capture-size` | 128 | 128 | ✓ |
+
+**PR internal tension on this topology:** `conc-list` goes to **512**, but prefill `max-num-seqs` is **256** and decode `max-num-seqs` is **128**. Prefill/decode `max-num-batched-tokens` (**8192 / 256**) are unchanged from the lower-tier **1P/1D DEP8/DEP8** recipe even though concurrency targets roughly doubled — so the scheduler caps do not scale with the benchmark conc sweep.
 
 ### 3P / 1D EP8 / EP16
 
@@ -192,8 +238,9 @@ These are not represented in llm-manifesto but affect how PR configs run:
 1. **Decide topology parity** — Add local variants for DEP12 decode (1P/1D and 2P/1D) and/or aggregate TP8 if AgentX parity is required; or document intentional omission.
 2. **Do not adopt PR MoE backend string** — PR's `deep_gemm_amxf4_mega_moe` is not upstream vLLM; local `deep_gemm_mega_moe` is correct for native DeepSeek-V4-Pro on Blackwell. Flag PR #2260 for correction or document fork dependency.
 3. **KV connector strategy** — PR disagg relies on Mooncake + Nixl MultiConnector; local is Nixl-only. Mooncake store config (RDMA devices, segment sizes) would need a manifest equivalent if adopting PR tuning.
-4. **Concurrency caps** — PR uses much lower per-role `max-num-seqs` than local’s 1024 computed ceiling; reconcile with AgentX session fan-out comments in PR agg recipe (`max-num-seqs: 32`).
-5. **EPLB / DeepEP** — Local base EP16 decode enables EPLB + `deepep_v2`; PR drops both. Confirm whether EP16 production should keep EPLB or follow PR’s simpler decode path.
+4. **Fix PR changelog text** — `perf-changelog.yaml` description lists wrong concurrencies for 4/5 configs; update to match `nvidia-master.yaml` or drop prose in favor of `config-keys` only.
+5. **Concurrency caps** — PR uses much lower per-role `max-num-seqs` than local’s 1024 computed ceiling; reconcile with AgentX session fan-out comments in PR agg recipe (`max-num-seqs: 32`).
+6. **EPLB / DeepEP** — Local base EP16 decode enables EPLB + `deepep_v2`; PR drops both. Confirm whether EP16 production should keep EPLB or follow PR’s simpler decode path.
 
 ---
 

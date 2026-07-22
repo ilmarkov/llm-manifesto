@@ -169,14 +169,17 @@ def test_deepseek_v4_ix_disagg_variants_expand(
     prefill = spec.role("prefill")
 
     assert spec.topology == "pd"
-    assert spec.model.image == DEFAULT_IMAGES.get("vllm.ix")
+    assert spec.model.image == DEFAULT_IMAGES.get("vllm.standard")
     assert prefill.lws.replicas == prefill_replicas
     assert decode.lws.size == decode_size
     assert decode.parallelism.dp_size == decode_dp
     assert prefill.vllm_args["max_num_seqs"] == prefill_max_seqs
     assert decode.vllm_args["max_num_seqs"] == decode_max_seqs
     assert decode.vllm_args["max_cudagraph_capture_size"] == decode_cudagraph
-    assert prefill.kv_transfer_config["kv_connector"] == "MultiConnector"
+    assert prefill.vllm_args["max_num_batched_tokens"] == 8192
+    assert decode.vllm_args["max_num_batched_tokens"] == 256
+    assert prefill.kv_transfer_config["kv_connector"] == "NixlConnector"
+    assert decode.kv_transfer_config["kv_connector"] == "NixlConnector"
     assert prefill.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
     assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
     assert "all2all_backend" not in decode.vllm_args
@@ -191,6 +194,6 @@ def test_deepseek_v4_ix_agg_tp8():
     assert decode.parallelism.tp == 8
     assert decode.parallelism.dp_enabled is False
     assert decode.lws.size == 2
-    assert decode.kv_transfer_config["kv_connector"] == "MooncakeStoreConnector"
+    assert decode.kv_transfer_config is None
     assert decode.vllm_args["max_num_seqs"] == 32
     assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "0"
