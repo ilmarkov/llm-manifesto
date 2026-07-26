@@ -94,6 +94,16 @@ def build_launch_script(
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
+    multi_node_tp = layout.tp_world_size > layout.tp_local_size
+    if multi_node_tp:
+        lines += [
+            'HEADLESS_FLAG=""',
+            'if [ "${LWS_WORKER_INDEX:-0}" != "0" ]; then',
+            '  HEADLESS_FLAG="--headless"',
+            "fi",
+            "",
+        ]
+
     base_args: list[str | list[str]] = [
         "vllm",
         "serve",
@@ -101,6 +111,14 @@ def build_launch_script(
         ["--port", str(ports.backend[0]) if external_dp else "$PORT"],
         ["--tensor-parallel-size", str(layout.tp_world_size)],
     ]
+    if multi_node_tp:
+        tp_nodes = layout.tp_world_size // layout.tp_local_size
+        base_args += [
+            ["--nnodes", str(tp_nodes)],
+            ["--node-rank", "${LWS_WORKER_INDEX}"],
+            ["--master-addr", "${LWS_LEADER_ADDRESS}"],
+            "$HEADLESS_FLAG",
+        ]
     if not external_dp:
         base_args[3:3] = [["--device-ids", "$GPUS"]]
     if role.parallelism.ep:

@@ -6,6 +6,7 @@ import yaml
 
 from ..instance import Instance
 from ..cluster import Cluster
+from ..parallelism import parallel_layout
 from ..resolve import resolve_role
 from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 
@@ -91,6 +92,10 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
         "llm-d.ai/inferenceServing": "true",
         "llm-d.ai/deployment": spec.topology.value,
     }
+
+    layout = parallel_layout(role)
+    if layout.tp_world_size > layout.tp_local_size:
+        selector["leaderworkerset.sigs.k8s.io/worker-index"] = "0"
 
     return [
         {

@@ -9,8 +9,30 @@ from .sidecars import sidecars
 from ..cluster import Cluster
 from ..instance import Instance
 from ..launch import build_launch_script
+from ..parallelism import parallel_layout
 from ..resolve import resolve_role
 from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
+
+
+def _readiness_probe_cmd(role: RoleSpec, readiness_ports: list[int]) -> str:
+    """Build the readiness probe shell command.
+
+    For multi-node TP the worker pods run --headless (no HTTP server), so the
+    probe checks the vllm process instead.  The leader still gets the normal
+    /v1/models HTTP probe.
+    """
+    layout = parallel_layout(role)
+    http_check = " && ".join(
+        f"curl -sf http://localhost:{port}/v1/models | grep -q '\"id\"'"
+        for port in readiness_ports
+    )
+    if layout.tp_world_size <= layout.tp_local_size:
+        return http_check
+    return (
+        'if [ "${LWS_WORKER_INDEX:-0}" = "0" ]; then '
+        + http_check
+        + "; else pgrep -f 'vllm' > /dev/null; fi"
+    )
 
 
 def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec) -> dict:
@@ -104,11 +126,7 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                 "command": [
                     "/bin/bash",
                     "-c",
-                    # TODO(readiness): compare with upstream llm-d probes as these templates mature.
-                    " && ".join(
-                        f"curl -sf http://localhost:{port}/v1/models | grep -q '\"id\"'"
-                        for port in readiness_ports
-                    ),
+                    _readiness_probe_cmd(role, readiness_ports),
                 ]
             },
             "periodSeconds": 5,

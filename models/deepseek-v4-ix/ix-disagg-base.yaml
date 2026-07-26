@@ -64,6 +64,8 @@ roles:
     vllm:
       load_format: auto
       trust_remote_code: true
+      # not useful
+      # enable_prompt_tokens_details: true
       moe_backend: deep_gemm_mega_moe
       gpu_memory_utilization: "0.95"
       kv_cache_dtype: fp8
@@ -137,6 +139,8 @@ roles:
     vllm:
       load_format: auto
       trust_remote_code: true
+      # not useful
+      # enable_prompt_tokens_details: true
       moe_backend: deep_gemm_mega_moe
       gpu_memory_utilization: "0.9"
       kv_cache_dtype: fp8

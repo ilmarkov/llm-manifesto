@@ -4,7 +4,8 @@ topology: aggregated
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
-  image_ref: vllm.ix
+  # image_ref: vllm.ix
+  image_ref: vllm.standard
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: load_aware, target_role: decode}
@@ -62,7 +63,8 @@ roles:
       max_cudagraph_capture_size: 32
       gpu_memory_utilization: "0.95"
       kv_cache_memory: 37580963840
-      stream_interval: 10
+      # not useful
+      # enable_prompt_tokens_details: true
       attention_config:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true
