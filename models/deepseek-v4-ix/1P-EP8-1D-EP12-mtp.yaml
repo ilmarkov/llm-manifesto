@@ -1,7 +1,7 @@
-# InferenceX: disagg-gb200-1p1d-dep8-dep12-agentic / dsv4-fp4-gb200-dynamo-vllm-agentic-1p1d-dep8-dep12
-# 5 nodes / 20 GPUs. Benchmark conc-list: 384, 512
+# MTP variant of 1P-EP8-1D-EP12: disagg-gb200-1p1d-dep8-dep12-agentic
+# 5 nodes / 20 GPUs. MTP with 3 speculative tokens.
 extends: ix-disagg-base.yaml
-release: ix-1p-ep8-1d-ep12
+release: ix-1p-ep8-1d-ep12-mtp
 
 roles:
   prefill:
@@ -14,5 +14,5 @@ roles:
     parallelism: {tp: 1, dp: 12, ep: true}
     vllm:
       max_num_seqs: 128
+      max_num_batched_tokens: 512
       max_cudagraph_capture_size: 128
-      speculative_config: $delete

@@ -83,6 +83,9 @@ roles:
         use_prefill_query_quantization: true
         use_fp4_indexer_cache: true
       compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 3
 
   - name: prefill
     workload_name: vllm-ep8-prefill

@@ -2,3 +2,8 @@
 # 2 nodes / 8 GPUs (TP8). Benchmark conc-list: 1, 4, 8, 16
 extends: ix-agg-base.yaml
 release: ix-agg-tp8
+
+roles:
+  decode:
+    vllm:
+      speculative_config: $delete
