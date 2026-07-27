@@ -52,12 +52,12 @@ roles:
       VLLM_V2_WARMUP_MAX_NUM_SEQS: "20"
       # VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
-      VLLM_ALLREDUCE_USE_SYMM_MEM: "0"
       TILELANG_CLEANUP_TEMP_FILES: "1"
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
       UCX_TLS: rc,cuda_copy
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
+      VLLM_USE_DEEP_GEMM: "1"
       # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi

@@ -5,7 +5,7 @@ model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
   # image_ref: vllm.ix
-  image_ref: vllm.standard
+  image_ref: vllm.nightly
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: load_aware, target_role: decode}
@@ -17,19 +17,22 @@ roles:
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 8, dp: false, ep: false, gpus: 4}
     fabric_profile: megamoe
-    # Mooncake disabled until store config + master are wired for Kubernetes.
     # kv_transfer_config:
-    #   kv_connector: MooncakeStoreConnector
+    #   kv_connector: SimpleCPUOffloadConnector
     #   kv_role: kv_both
     #   kv_connector_extra_config:
-    #     load_async: true
-    #     lookup_async: true
-    #     enable_offload: false
+    #     cpu_bytes_to_use_per_rank: 119500000000
+    #     lazy_offload: false
+    #     enable_cross_layers_blocks: "true"
     env:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_USE_RUST_FRONTEND: "1"
       VLLM_SERVER_DEV_MODE: "1"
-      VLLM_USE_NCCL_SYMM_MEM: "0"
+      VLLM_USE_NCCL_SYMM_MEM: "1"
+      VLLM_ALLREDUCE_USE_SYMM_MEM: "1"
+      NCCL_CUMEM_ENABLE: "1"
+      NCCL_MNNVL_ENABLE: "1"
+      NCCL_NVLS_ENABLE: "1"
       VLLM_ENGINE_READY_TIMEOUT_S: "3600"
       VLLM_RPC_TIMEOUT: "600000"
       # VLLM_MOONCAKE_LOAD_RECV_THREADS: "4"
@@ -42,9 +45,12 @@ roles:
       TILELANG_CLEANUP_TEMP_FILES: "1"
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
       UCX_MEMTYPE_REG_WHOLE: "n"
+      UCX_MEMTYPE_CACHE: "n"
       UCX_RCACHE_MAX_UNRELEASED: "1024"
       UCX_TLS: cuda_copy,cuda_ipc,tcp
+      UCX_CUDA_IPC_ENABLE_MNNVL: "y"
       NCCL_P2P_LEVEL: NVL
+      VLLM_V2_WARMUP_MAX_NUM_SEQS: "20"
       # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
@@ -61,15 +67,15 @@ roles:
       max_num_seqs: 32
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 32
-      gpu_memory_utilization: "0.95"
-      kv_cache_memory: 37580963840
+      gpu_memory_utilization: "0.92"
+      kv_cache_memory: 37580963840 # 35 GiB
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
       # not useful
       # enable_prompt_tokens_details: true
       attention_config:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true
         use_fp4_indexer_cache: true
-      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
       speculative_config:
         method: mtp
         num_speculative_tokens: 3
