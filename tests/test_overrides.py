@@ -196,4 +196,4 @@ def test_deepseek_v4_ix_agg_tp8():
     assert decode.lws.size == 2
     assert decode.kv_transfer_config is None
     assert decode.vllm_args["max_num_seqs"] == 32
-    assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "0"
+    assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "1"

@@ -1,0 +1,4 @@
+# MTP variant of agg-dep8: Aggregated DEP8 with MTP.
+# 2 nodes / 8 GPUs (DP8 + EP). MTP with 3 speculative tokens.
+extends: ix-agg-dep-base.yaml
+release: ix-agg-dep8-mtp

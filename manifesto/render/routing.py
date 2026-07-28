@@ -11,31 +11,45 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 
 
-def _plugin_config(routing: RoutingSpec) -> str:
+def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
     if routing.kind == RoutingKind.PD:
         config = {
-            "apiVersion": "inference.networking.x-k8s.io/v1alpha1",
+            "apiVersion": "llm-d.ai/v1alpha1",
             "kind": "EndpointPickerConfig",
             "plugins": [
-                {"type": "disagg-headers-handler"},
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
+                {
+                    "type": "approx-prefix-cache-producer",
+                    "parameters": {
+                        "blockSizeTokens": 256,
+                        "maxPrefixTokensToMatch": 1048576,
+                        "maxPrefixBlocksToMatch": 4096,
+                    },
+                },
+                {
+                    "type": "prefix-cache-affinity-filter",
+                    "parameters": {"peakPrefillThroughput": 200000},
+                },
                 {"type": "prefix-cache-scorer"},
+                {"type": "kv-cache-utilization-scorer"},
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                {"type": "weighted-random-picker", "name": "prefill-picker", "parameters": {"threshold": 0.1, "hashBlockSize": 5}},
-                {"type": "weighted-random-picker", "name": "decode-picker", "parameters": {"threshold": 0.1}},
+                {"type": "max-score-picker", "name": "prefill-picker"},
+                {"type": "weighted-random-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
                 {
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
-                        {"pluginRef": "prefix-cache-scorer", "weight": 3},
+                        {"pluginRef": "prefix-cache-affinity-filter"},
+                        {"pluginRef": "prefix-cache-scorer", "weight": 10},
+                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
                         {"pluginRef": "active-request-scorer", "weight": 2},
                         {"pluginRef": "queue-scorer", "weight": 2},
                         {"pluginRef": "prefill-picker"},
@@ -45,10 +59,48 @@ def _plugin_config(routing: RoutingSpec) -> str:
                     "name": "decode",
                     "plugins": [
                         {"pluginRef": "decode-filter"},
+                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
                         {"pluginRef": "active-request-scorer", "weight": 2},
                         {"pluginRef": "decode-picker"},
                     ],
                 },
+            ],
+        }
+    elif dp_enabled:
+        config = {
+            "apiVersion": "llm-d.ai/v1alpha1",
+            "kind": "EndpointPickerConfig",
+            "plugins": [
+                {
+                    "type": "approx-prefix-cache-producer",
+                    "parameters": {
+                        "blockSizeTokens": 256,
+                        "maxPrefixTokensToMatch": 1048576,
+                        "maxPrefixBlocksToMatch": 4096,
+                    },
+                },
+                {
+                    "type": "prefix-cache-affinity-filter",
+                    "parameters": {"peakPrefillThroughput": 200000},
+                },
+                {"type": "prefix-cache-scorer"},
+                {"type": "kv-cache-utilization-scorer"},
+                {"type": "active-request-scorer"},
+                {"type": "queue-scorer"},
+                {"type": "max-score-picker"},
+            ],
+            "schedulingProfiles": [
+                {
+                    "name": "default",
+                    "plugins": [
+                        {"pluginRef": "prefix-cache-affinity-filter"},
+                        {"pluginRef": "prefix-cache-scorer", "weight": 10},
+                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
+                        {"pluginRef": "active-request-scorer", "weight": 2},
+                        {"pluginRef": "queue-scorer", "weight": 2},
+                        {"pluginRef": "max-score-picker"},
+                    ],
+                }
             ],
         }
     else:
@@ -58,7 +110,7 @@ def _plugin_config(routing: RoutingSpec) -> str:
             "plugins": [
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
-                {"type": "weighted-random-picker", "parameters": {"threshold": 0.1}},
+                {"type": "weighted-random-picker"},
             ],
             "schedulingProfiles": [
                 {
@@ -151,7 +203,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": instance.name("epp-config"), "labels": instance.labels("routing")},
-            "data": {"plugins.yaml": _plugin_config(spec.routing)},
+            "data": {"plugins.yaml": _plugin_config(spec.routing, dp_enabled=role.parallelism.dp_enabled)},
         },
         {
             "apiVersion": "inference.networking.k8s.io/v1",

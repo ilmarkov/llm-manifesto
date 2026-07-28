@@ -204,6 +204,10 @@ class DeploymentSpec(BaseModel):
             decode.routing_proxy = True
             decode.serving_port_base = 8000
             decode.backend_port_base = 8200
+        elif self.topology == TopologyKind.AGGREGATED:
+            for role in self.roles:
+                if role.parallelism.dp_enabled and not role.routing_proxy:
+                    role.dp_load_balancing = DpLoadBalancing.EXTERNAL
         for role in self.roles:
             if role.routing_proxy and role.dp_load_balancing != DpLoadBalancing.EXTERNAL:
                 raise ValueError(f"{role.name}: routing_proxy requires dp_load_balancing: external")

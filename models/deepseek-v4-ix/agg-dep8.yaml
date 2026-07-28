@@ -1,0 +1,8 @@
+# Aggregated DEP8: 2 nodes / 8 GPUs (DP8 + EP).
+extends: ix-agg-dep-base.yaml
+release: ix-agg-dep8
+
+roles:
+  decode:
+    vllm:
+      speculative_config: $delete

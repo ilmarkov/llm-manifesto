@@ -164,7 +164,7 @@ def test_explicit_cpu_and_memory_are_preserved_exactly():
 def test_cache_key_comes_from_image_identity_unless_overridden():
     spec = load_spec(ROOT / "models" / "qwen" / "aggregated.yaml", CLUSTER)
 
-    assert spec.cache_key == "v0.25.1"
+    assert spec.cache_key == "v0.26.0"
     spec.model.image = "registry.example/vllm@sha256:abc123"
     assert spec.cache_key == "sha256-abc123"
     spec.cache.key = "dev/build 42"
@@ -213,11 +213,11 @@ def test_cluster_path_templates_feed_cache_dev_and_logs():
     script = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]["containers"][0]["args"][0]
 
     assert resolved.env["MANIFESTO_VLLM_DEV_VENV"] == "/venvs/tester-name/wide-ep-1p-ep8-1d-ep8"
-    assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/vllm"
-    assert resolved.env["HOME"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.25.1/home"
+    assert resolved.env["VLLM_CACHE_ROOT"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.26.0/vllm"
+    assert resolved.env["HOME"] == "/cache/tester-name/wide-ep-1p-ep8-1d-ep8/gb200/cu13/v0.26.0/home"
     assert "USER" not in resolved.env
-    assert resolved.env["TRITON_CACHE_DIR"].endswith("/v0.25.1/triton")
-    assert resolved.env["TORCHINDUCTOR_CACHE_DIR"].endswith("/v0.25.1/torchinductor")
+    assert resolved.env["TRITON_CACHE_DIR"].endswith("/v0.26.0/triton")
+    assert resolved.env["TORCHINDUCTOR_CACHE_DIR"].endswith("/v0.26.0/torchinductor")
     assert "LOG_DIR=/logs/tester-name/wide-ep-1p-ep8-1d-ep8/decode" in script
     assert "find /src/tester-name/vllm" in script
     assert "ucx-lib" not in script
