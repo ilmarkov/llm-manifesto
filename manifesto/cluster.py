@@ -161,6 +161,15 @@ class OpenShiftConfig(BaseModel):
     scc: str | None = None
 
 
+class MooncakeConfig(BaseModel):
+    """Configuration for Mooncake distributed KV cache master service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    master_image: str = "kvcacheai/mooncake:0.3.11.post1"
+    protocol: Literal["rdma", "tcp"] = "rdma"
+
+
 class Cluster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -179,6 +188,7 @@ class Cluster(BaseModel):
     fabric: FabricConfig
     llm_d: LlmdConfig = Field(default_factory=LlmdConfig)
     openshift: OpenShiftConfig = Field(default_factory=OpenShiftConfig)
+    mooncake: MooncakeConfig | None = None
 
     @model_validator(mode="after")
     def default_hf_home(self) -> "Cluster":

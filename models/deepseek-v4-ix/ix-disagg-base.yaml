@@ -2,6 +2,11 @@
 # Slurm/Dynamo/benchmark harness settings are omitted; see models/deepseek-v4/inferencex-pr2260-diff.md.
 topology: pd
 
+mooncake:
+  enabled: true
+  global_segment_size: "80GB"
+  local_buffer_size: "4GB"
+
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
@@ -27,12 +32,13 @@ roles:
             kv_role: kv_both
             kv_load_failure_policy: fail
             kv_buffer_device: cuda
-          - kv_connector: SimpleCPUOffloadConnector
+          - kv_connector: MooncakeStoreConnector
             kv_role: kv_both
             kv_connector_extra_config:
-              cpu_bytes_to_use_per_rank: 100000000000
-              lazy_offload: false
-              enable_cross_layers_blocks: "true"
+              load_async: true
+              lookup_async: true
+              enable_cross_layers_blocks: false
+              enable_offload: false
     env:
       VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
       VLLM_USE_V2_MODEL_RUNNER: "1"
@@ -42,7 +48,7 @@ roles:
       VLLM_ENGINE_READY_TIMEOUT_S: "3600"
       VLLM_RPC_TIMEOUT: "600000"
       VLLM_LOG_STATS_INTERVAL: "1"
-      # VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
+      VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
       TILELANG_CLEANUP_TEMP_FILES: "1"
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
@@ -51,7 +57,7 @@ roles:
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
       VLLM_USE_DEEP_GEMM: "1"
       # VLLM_V2_WARMUP_MAX_NUM_SEQS: "32"  # Not recognized by current vLLM; awaiting shared JIT warmup infra (vllm PR #47451)
-      # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
+      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
     vllm:
@@ -95,12 +101,13 @@ roles:
             kv_role: kv_both
             kv_load_failure_policy: fail
             kv_buffer_device: cuda
-          - kv_connector: SimpleCPUOffloadConnector
+          - kv_connector: MooncakeStoreConnector
             kv_role: kv_both
             kv_connector_extra_config:
-              cpu_bytes_to_use_per_rank: 100000000000
-              lazy_offload: false
-              enable_cross_layers_blocks: "true"
+              load_async: true
+              lookup_async: true
+              enable_cross_layers_blocks: false
+              enable_offload: false
     env:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_USE_RUST_FRONTEND: "1"
@@ -111,7 +118,7 @@ roles:
       VLLM_RPC_TIMEOUT: "600000"
       VLLM_LOG_STATS_INTERVAL: "1"
       # VLLM_V2_WARMUP_MAX_NUM_SEQS: "32"  # Not recognized by current vLLM; awaiting shared JIT warmup infra (vllm PR #47451)
-      # VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
+      VLLM_MOONCAKE_LOAD_RECV_THREADS: "20"
       VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
       VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
@@ -121,7 +128,7 @@ roles:
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
       VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
-      # MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
+      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
     vllm:

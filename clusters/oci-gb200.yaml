@@ -29,6 +29,10 @@ dev:
   venv: /mnt/lustre/{user}/vllm-venv
   source: /mnt/lustre/{user}/vllm-dev
 
+mooncake:
+  master_image: "kvcacheai/mooncake:0.3.11.post1"
+  protocol: "rdma"
+
 fabric:
   ucx_net_devices: mlx5_0:1,mlx5_1:1,mlx5_3:1,mlx5_4:1
   imex_resource_claim_template: llm-d-dev-claim

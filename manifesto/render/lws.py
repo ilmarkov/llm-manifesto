@@ -14,6 +14,50 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
+def _mooncake_init_container(instance: Instance) -> dict:
+    """Init container that waits for mooncake-master to be ready (srt-slurm approach)."""
+    master_host = instance.name("mooncake-master")
+    return {
+        "name": "wait-for-mooncake",
+        "image": "busybox:1.36",
+        "command": [
+            "sh",
+            "-c",
+            f"""echo "Waiting for {master_host}:50051 (timeout 120s)..."
+TIMEOUT=120
+ELAPSED=0
+while ! nc -z {master_host} 50051; do
+  if [ $ELAPSED -ge $TIMEOUT ]; then
+    echo "ERROR: mooncake-master not ready after ${{TIMEOUT}}s"
+    exit 1
+  fi
+  echo "mooncake-master not ready, sleeping 5s... (${{ELAPSED}}s elapsed)"
+  sleep 5
+  ELAPSED=$((ELAPSED + 5))
+done
+echo "mooncake-master is ready!"
+""",
+        ],
+    }
+
+
+def _mooncake_volume(instance: Instance) -> dict:
+    """Volume definition for Mooncake config ConfigMap."""
+    return {
+        "name": "mooncake-config",
+        "configMap": {"name": instance.name("mooncake-config")},
+    }
+
+
+def _mooncake_volume_mount() -> dict:
+    """VolumeMount for Mooncake config."""
+    return {
+        "name": "mooncake-config",
+        "mountPath": "/etc/mooncake",
+        "readOnly": True,
+    }
+
+
 def _readiness_probe_cmd(role: RoleSpec, readiness_ports: list[int]) -> str:
     """Build the readiness probe shell command.
 
@@ -48,6 +92,8 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     if role.shm_size:
         volumes[0]["emptyDir"]["sizeLimit"] = role.shm_size
     volumes.extend(extra_volumes)
+    if spec.mooncake.enabled:
+        volumes.append(_mooncake_volume(instance))
 
     container_ports = [
         {"containerPort": port, "name": f"vllm-{idx}", "protocol": "TCP"}
@@ -58,6 +104,8 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     readiness_ports = resolved.ports.public if role.routing_proxy else resolved.ports.backend
 
     init_containers = []
+    if spec.mooncake.enabled:
+        init_containers.append(_mooncake_init_container(instance))
     if role.routing_proxy:
         init_containers.append(
             {
@@ -102,6 +150,8 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         container_env.append(
             field_ref_env("VLLM_NIXL_SIDE_CHANNEL_HOST", "status.podIP")
         )
+    if spec.mooncake.enabled:
+        container_env.append({"name": "MOONCAKE_CONFIG_PATH", "value": "/etc/mooncake/mooncake_config.json"})
 
     vllm_container = {
         "name": "vllm",
@@ -145,7 +195,7 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                 "nvidia.com/gpu": str(role.resources.gpus),
             },
         },
-        "volumeMounts": cluster.volume_mounts(),
+        "volumeMounts": cluster.volume_mounts() + ([_mooncake_volume_mount()] if spec.mooncake.enabled else []),
         "workingDir": "/code",
     }
     if external_dp:

@@ -178,8 +178,11 @@ def test_deepseek_v4_ix_disagg_variants_expand(
     assert decode.vllm_args["max_cudagraph_capture_size"] == decode_cudagraph
     assert prefill.vllm_args["max_num_batched_tokens"] == 8192
     assert decode.vllm_args["max_num_batched_tokens"] == 256
-    assert prefill.kv_transfer_config["kv_connector"] == "NixlConnector"
-    assert decode.kv_transfer_config["kv_connector"] == "NixlConnector"
+    assert prefill.kv_transfer_config["kv_connector"] == "MultiConnector"
+    assert decode.kv_transfer_config["kv_connector"] == "MultiConnector"
+    connectors = prefill.kv_transfer_config["kv_connector_extra_config"]["connectors"]
+    assert connectors[0]["kv_connector"] == "NixlConnector"
+    assert connectors[1]["kv_connector"] == "MooncakeStoreConnector"
     assert prefill.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
     assert decode.vllm_args["moe_backend"] == "deep_gemm_mega_moe"
     assert "all2all_backend" not in decode.vllm_args
@@ -196,4 +199,4 @@ def test_deepseek_v4_ix_agg_tp8():
     assert decode.lws.size == 2
     assert decode.kv_transfer_config is None
     assert decode.vllm_args["max_num_seqs"] == 32
-    assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "1"
+    assert decode.env["VLLM_USE_NCCL_SYMM_MEM"] == "0"

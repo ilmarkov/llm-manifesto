@@ -7,7 +7,7 @@ import warnings
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -159,6 +159,19 @@ class CacheSpec(BaseModel):
     key: str | None = None
 
 
+class MooncakeSpec(BaseModel):
+    """Configuration for Mooncake distributed KV cache."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    global_segment_size: str = "150GB"
+    local_buffer_size: str = "4GB"
+    mode: Literal["embedded", "standalone-store"] = "embedded"
+    enable_offload: bool = False
+    replicas: int = Field(1, ge=1)
+
+
 class DeploymentSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -170,6 +183,7 @@ class DeploymentSpec(BaseModel):
     routing: RoutingSpec = Field(default_factory=RoutingSpec)
     runtime: RuntimeSpec = Field(default_factory=RuntimeSpec)
     cache: CacheSpec = Field(default_factory=CacheSpec)
+    mooncake: MooncakeSpec = Field(default_factory=MooncakeSpec)
     vars: dict[str, Any] = Field(default_factory=dict)
 
     @property

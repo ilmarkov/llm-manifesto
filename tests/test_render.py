@@ -1,13 +1,17 @@
 """Structural tests for rendered Kubernetes objects and YAML serialization."""
 
+import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from manifesto.cluster import load_cluster
 from manifesto.images import DEFAULT_IMAGES
+from manifesto.instance import Instance
 from manifesto.render import render, render_to_yaml
 from manifesto.render.devpod import render_dev_pod
+from manifesto.render.mooncake import render_mooncake
 from manifesto.spec import load_spec
 
 
@@ -402,3 +406,94 @@ def test_deepseek_v4_nested_attention_config_preserves_official_flag_spelling():
 
         assert "--attention_config.use_fp4_indexer_cache=True" in script
         assert "attention-config.use-fp4-indexer-cache" not in script
+
+
+def test_render_mooncake_returns_empty_when_disabled():
+    spec = load_spec(ROOT / "models" / DEEPSEEK, CLUSTER)
+    spec.mooncake.enabled = False
+    instance = Instance(user="tester", release=spec.release)
+
+    result = render_mooncake(spec, instance, CLUSTER)
+
+    assert result == []
+
+
+def test_render_mooncake_emits_configmap_service_deployment_when_enabled():
+    spec = load_spec(ROOT / "models" / DEEPSEEK, CLUSTER)
+    spec.mooncake.enabled = True
+    instance = Instance(user="tester", release=spec.release)
+
+    result = render_mooncake(spec, instance, CLUSTER)
+
+    assert len(result) == 3
+    kinds = {obj["kind"] for obj in result}
+    assert kinds == {"ConfigMap", "Service", "Deployment"}
+
+    configmap = next(obj for obj in result if obj["kind"] == "ConfigMap")
+    config_json = json.loads(configmap["data"]["mooncake_config.json"])
+    assert config_json["master_server_address"].endswith(".svc.cluster.local:50051")
+    assert config_json["device_name"] == "mlx5_0,mlx5_1,mlx5_3,mlx5_4"
+    assert config_json["protocol"] == "rdma"
+
+    service = next(obj for obj in result if obj["kind"] == "Service")
+    assert service["spec"]["ports"][0]["port"] == 50051
+
+    deployment = next(obj for obj in result if obj["kind"] == "Deployment")
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    assert container["command"] == ["mooncake_master", "--port", "50051"]
+    assert container["readinessProbe"]["tcpSocket"]["port"] == 50051
+
+
+def test_render_mooncake_raises_when_cluster_mooncake_unset():
+    spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", CKS_H200)
+    spec.mooncake.enabled = True
+    instance = Instance(user="tester", release=spec.release)
+
+    with pytest.raises(ValueError, match="has no `mooncake:` section"):
+        render_mooncake(spec, instance, CKS_H200)
+
+
+def test_render_mooncake_raises_when_ucx_net_devices_empty():
+    cluster = CKS_H200.model_copy(deep=True)
+    cluster.mooncake = CLUSTER.mooncake
+    spec = load_spec(ROOT / "models" / "qwen" / "h200-aggregated.yaml", cluster)
+    spec.mooncake.enabled = True
+    instance = Instance(user="tester", release=spec.release)
+
+    with pytest.raises(ValueError, match="empty ucx_net_devices"):
+        render_mooncake(spec, instance, cluster)
+
+
+def test_mooncake_enabled_adds_init_container_volume_and_env():
+    spec = load_spec(ROOT / "models" / DEEPSEEK, CLUSTER)
+    spec.mooncake.enabled = True
+    objects = render(spec, user="tester", cluster=CLUSTER)
+
+    for role in ("decode", "prefill"):
+        lws = _find(objects, "LeaderWorkerSet", role)
+        pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+        init_containers = pod_spec.get("initContainers", [])
+        container = pod_spec["containers"][0]
+        volumes = {v["name"]: v for v in pod_spec["volumes"]}
+        env = {item["name"]: item.get("value") for item in container["env"]}
+
+        wait_init = next((ic for ic in init_containers if ic["name"] == "wait-for-mooncake"), None)
+        assert wait_init is not None, f"{role} should have wait-for-mooncake init container"
+        assert "nc -z" in wait_init["command"][-1]
+
+        assert "mooncake-config" in volumes
+        assert volumes["mooncake-config"]["configMap"]["name"].endswith("mooncake-config")
+
+        mooncake_mount = next(
+            (m for m in container["volumeMounts"] if m["name"] == "mooncake-config"), None
+        )
+        assert mooncake_mount is not None
+        assert mooncake_mount["mountPath"] == "/etc/mooncake"
+
+        assert env["MOONCAKE_CONFIG_PATH"] == "/etc/mooncake/mooncake_config.json"
+
+
+def test_cks_h200_cluster_still_loads_without_mooncake():
+    """Regression check: clusters without mooncake section still load."""
+    assert CKS_H200.mooncake is None
+    assert CKS_H200.fabric.ucx_net_devices == ""
