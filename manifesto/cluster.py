@@ -166,7 +166,7 @@ class MooncakeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    master_image: str = "kvcacheai/mooncake:0.3.11.post1"
+    master_image: str = "kvcacheai/mooncake:0.3.12.post1"
     protocol: Literal["rdma", "tcp"] = "rdma"
 
 

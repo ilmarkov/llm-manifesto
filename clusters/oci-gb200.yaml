@@ -30,7 +30,7 @@ dev:
   source: /mnt/lustre/{user}/vllm-dev
 
 mooncake:
-  master_image: "kvcacheai/mooncake:0.3.11.post1"
+  master_image: "kvcacheai/mooncake:0.3.12.post1"
   protocol: "rdma"
 
 fabric:

@@ -58,6 +58,18 @@ def _mooncake_volume_mount() -> dict:
     }
 
 
+# Mooncake client version to install - must match the master image version
+MOONCAKE_CLIENT_VERSION = "0.3.12.post1"
+
+
+def _mooncake_upgrade_prefix() -> str:
+    """Returns shell command prefix to upgrade mooncake client before vLLM starts.
+    
+    Uses mooncake-transfer-engine-cuda13 for CUDA 13.x compatibility (GB200/Blackwell).
+    """
+    return f"pip install --upgrade mooncake-transfer-engine-cuda13=={MOONCAKE_CLIENT_VERSION} && "
+
+
 def _readiness_probe_cmd(role: RoleSpec, readiness_ports: list[int]) -> str:
     """Build the readiness probe shell command.
 
@@ -153,22 +165,25 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     if spec.mooncake.enabled:
         container_env.append({"name": "MOONCAKE_CONFIG_PATH", "value": "/etc/mooncake/mooncake_config.json"})
 
+    launch_script = build_launch_script(
+        spec,
+        role,
+        resolved.ports,
+        log_dir=resolved.log_dir,
+        dev_source=resolved.dev_source,
+        vllm_args=resolved.vllm_args,
+    )
+    # Prepend mooncake client upgrade when enabled to ensure version matches master
+    if spec.mooncake.enabled:
+        launch_script = _mooncake_upgrade_prefix() + launch_script
+
     vllm_container = {
         "name": "vllm",
         "image": spec.model.image,
         "imagePullPolicy": "Always",
         "securityContext": security_context,
         "command": ["/bin/bash", "-c"],
-        "args": [
-            build_launch_script(
-                spec,
-                role,
-                resolved.ports,
-                log_dir=resolved.log_dir,
-                dev_source=resolved.dev_source,
-                vllm_args=resolved.vllm_args,
-            )
-        ],
+        "args": [launch_script],
         "env": container_env,
         "ports": container_ports,
         "readinessProbe": {
