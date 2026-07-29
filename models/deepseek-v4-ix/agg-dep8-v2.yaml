@@ -1,0 +1,9 @@
+# Aggregated DEP8 v2: 2 nodes / 8 GPUs (DP8 + EP).
+# Based on InferenceX PR #2260 changes (excluding mooncake).
+extends: ix-agg-dep-base-v2.yaml
+release: ix-agg-dep8-v2
+
+roles:
+  decode:
+    vllm:
+      speculative_config: $delete

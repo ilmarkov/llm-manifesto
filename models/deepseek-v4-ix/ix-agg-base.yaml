@@ -45,7 +45,7 @@ roles:
       UCX_TLS: cuda_copy,cuda_ipc,tcp
       UCX_CUDA_IPC_ENABLE_MNNVL: "y"
       NCCL_P2P_LEVEL: NVL
-      VLLM_V2_WARMUP_MAX_NUM_SEQS: "32"
+      # VLLM_V2_WARMUP_MAX_NUM_SEQS: "32"  # Not recognized by current vLLM; awaiting shared JIT warmup infra (vllm PR #47451)
     resources:
       ephemeral_storage: 128Gi
     vllm:
