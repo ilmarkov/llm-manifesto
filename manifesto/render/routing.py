@@ -31,15 +31,21 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 },
                 {
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 200000},
+                    "parameters": {"peakPrefillThroughput": 80000},
                 },
                 {"type": "prefix-cache-scorer"},
-                {"type": "kv-cache-utilization-scorer"},
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
+                # Explicit instance (not auto-injected): llm-d-router v0.9.0 only registers
+                # inflight-load-producer as the default producer for InFlightLoadDataKey, not
+                # for UncachedRequestTokensDataKey, even though it produces both. Without this
+                # explicit declaration, EPP fails to start when token-load-scorer (the only
+                # consumer of UncachedRequestTokensDataKey) is configured.
+                {"type": "inflight-load-producer"},
+                {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 750000}},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                {"type": "max-score-picker", "name": "prefill-picker"},
+                {"type": "weighted-random-picker", "name": "prefill-picker"},
                 {"type": "weighted-random-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
@@ -49,9 +55,9 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                         {"pluginRef": "prefill-filter"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
                         {"pluginRef": "prefix-cache-scorer", "weight": 10},
-                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
                         {"pluginRef": "active-request-scorer", "weight": 2},
                         {"pluginRef": "queue-scorer", "weight": 2},
+                        {"pluginRef": "token-load-scorer", "weight": 2},
                         {"pluginRef": "prefill-picker"},
                     ],
                 },
@@ -59,7 +65,6 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "decode",
                     "plugins": [
                         {"pluginRef": "decode-filter"},
-                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
                         {"pluginRef": "active-request-scorer", "weight": 2},
                         {"pluginRef": "decode-picker"},
                     ],
@@ -81,13 +86,12 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 },
                 {
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 200000},
+                    "parameters": {"peakPrefillThroughput": 80000},
                 },
                 {"type": "prefix-cache-scorer"},
-                {"type": "kv-cache-utilization-scorer"},
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
-                {"type": "max-score-picker"},
+                {"type": "weighted-random-picker"},
             ],
             "schedulingProfiles": [
                 {
@@ -95,10 +99,9 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "plugins": [
                         {"pluginRef": "prefix-cache-affinity-filter"},
                         {"pluginRef": "prefix-cache-scorer", "weight": 10},
-                        {"pluginRef": "kv-cache-utilization-scorer", "weight": 2},
                         {"pluginRef": "active-request-scorer", "weight": 2},
                         {"pluginRef": "queue-scorer", "weight": 2},
-                        {"pluginRef": "max-score-picker"},
+                        {"pluginRef": "weighted-random-picker"},
                     ],
                 }
             ],

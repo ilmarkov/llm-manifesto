@@ -123,6 +123,7 @@ roles:
       VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
       VLLM_DSV4_MEGA_FP8_COMBINE: "1"
       TILELANG_CLEANUP_TEMP_FILES: "1"
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
       DG_JIT_CACHE_DIR: /tmp/dg-cache-dsv4-agentx
       UCX_TLS: rc,cuda_copy
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
@@ -148,6 +149,7 @@ roles:
       tokenizer_mode: deepseek_v4
       max_model_len: 1048576
       max_num_batched_tokens: 8192
+      long_prefill_token_threshold: 1024
       attention_config:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true

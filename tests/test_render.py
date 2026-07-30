@@ -497,3 +497,24 @@ def test_cks_h200_cluster_still_loads_without_mooncake():
     """Regression check: clusters without mooncake section still load."""
     assert CKS_H200.mooncake is None
     assert CKS_H200.fabric.ucx_net_devices == ""
+
+
+def test_oci_gb200_model_pods_allow_hpc_rack_2_or_3():
+    objects = _objects(DEEPSEEK)
+    lws = next(obj for obj in objects if obj["kind"] == "LeaderWorkerSet")
+    pod_spec = lws["spec"]["leaderWorkerTemplate"]["workerTemplate"]["spec"]
+
+    assert pod_spec["tolerations"] == CLUSTER.pod_defaults.tolerations
+    terms = pod_spec["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][
+        "nodeSelectorTerms"
+    ]
+    rack_keys = {
+        expr["key"]
+        for term in terms
+        for expr in term["matchExpressions"]
+        if expr["key"].startswith("node-role.kubernetes.io/hpc-rack-")
+    }
+    assert rack_keys == {
+        "node-role.kubernetes.io/hpc-rack-2",
+        "node-role.kubernetes.io/hpc-rack-3",
+    }

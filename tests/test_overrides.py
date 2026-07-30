@@ -176,7 +176,7 @@ def test_deepseek_v4_ix_disagg_variants_expand(
     assert prefill.vllm_args["max_num_seqs"] == prefill_max_seqs
     assert decode.vllm_args["max_num_seqs"] == decode_max_seqs
     assert decode.vllm_args["max_cudagraph_capture_size"] == decode_cudagraph
-    assert prefill.vllm_args["max_num_batched_tokens"] == 8192
+    assert prefill.vllm_args["max_num_batched_tokens"] == 16384
     assert decode.vllm_args["max_num_batched_tokens"] == 256
     assert prefill.kv_transfer_config["kv_connector"] == "MultiConnector"
     assert decode.kv_transfer_config["kv_connector"] == "MultiConnector"
