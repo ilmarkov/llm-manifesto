@@ -11,7 +11,7 @@ model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
   # image_ref: vllm.ix
-  image_ref: vllm.standard
+  image_ref: vllm.nightly
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: pd, target_role: decode}
