@@ -29,19 +29,28 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                         "maxPrefixBlocksToMatch": 4096,
                     },
                 },
-                {
-                    "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 80000},
-                },
-                {"type": "prefix-cache-scorer"},
-                {"type": "active-request-scorer"},
-                {"type": "queue-scorer"},
                 # Explicit instance (not auto-injected): llm-d-router v0.9.0 only registers
                 # inflight-load-producer as the default producer for InFlightLoadDataKey, not
                 # for UncachedRequestTokensDataKey, even though it produces both. Without this
                 # explicit declaration, EPP fails to start when token-load-scorer (the only
                 # consumer of UncachedRequestTokensDataKey) is configured.
                 {"type": "inflight-load-producer"},
+                {
+                    # Hard backstop against per-rank request-queue skew: excludes prefill
+                    # endpoints whose EPP-tracked in-flight requests (running + queued,
+                    # including WAITING_FOR_REMOTE_KVS stalls) exceed maxConcurrency * (1
+                    # + headroom). Tuned from results/dsv4-pro-dspark: prefill ranks never
+                    # exceed ~12 concurrently *running* requests, but queue depth skews
+                    # 3-5x across ranks at c128/c192.
+                    "type": "concurrency-detector",
+                    "parameters": {"maxConcurrency": 20, "headroom": 0.5},
+                },
+                {
+                    "type": "prefix-cache-affinity-filter",
+                    "parameters": {"peakPrefillThroughput": 250000},
+                },
+                {"type": "prefix-cache-scorer"},
+                {"type": "active-request-scorer"},
                 {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 750000}},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
@@ -53,11 +62,10 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
+                        {"pluginRef": "concurrency-detector"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
-                        {"pluginRef": "prefix-cache-scorer", "weight": 10},
-                        {"pluginRef": "active-request-scorer", "weight": 2},
-                        {"pluginRef": "queue-scorer", "weight": 2},
-                        {"pluginRef": "token-load-scorer", "weight": 2},
+                        {"pluginRef": "prefix-cache-scorer", "weight": 5},
+                        {"pluginRef": "token-load-scorer", "weight": 5},
                         {"pluginRef": "prefill-picker"},
                     ],
                 },
