@@ -36,36 +36,34 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 # consumer of UncachedRequestTokensDataKey) is configured.
                 {"type": "inflight-load-producer"},
                 {
-                    # Hard backstop against per-rank request-queue skew: excludes prefill
-                    # endpoints whose EPP-tracked in-flight requests (running + queued,
-                    # including WAITING_FOR_REMOTE_KVS stalls) exceed maxConcurrency * (1
-                    # + headroom). Tuned from results/dsv4-pro-dspark: prefill ranks never
-                    # exceed ~12 concurrently *running* requests, but queue depth skews
-                    # 3-5x across ranks at c128/c192.
-                    "type": "concurrency-detector",
-                    "parameters": {"maxConcurrency": 20, "headroom": 0.5},
-                },
-                {
+                    # peakPrefillThroughput: log-derived from results/dsv4-pro's
+                    # -v1 prefill_0.log (Reqs Running:1, Deferred:0 solo/unchunked
+                    # windows) -- real sustained per-rank peak is ~57-75k tok/s;
+                    # matches the dp_enabled path's already-calibrated 80000 below.
+                    # maxTTFTPenaltyMs pinned at the llm-d-router default (5000ms)
+                    # rather than left implicit; NOT yet validated at c160-256 --
+                    # a static ms budget doesn't scale with concurrency, so this
+                    # gate could under-fire (pileup, low peakPrefillThroughput) or
+                    # over-fire (loses affinity right when we need it) at that
+                    # range. Re-check local_hit_pct + TTFT tails together on the
+                    # next c160-256 sweep before adjusting further.
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 250000},
+                    "parameters": {"peakPrefillThroughput": 80000, "maxTTFTPenaltyMs": 5000},
                 },
-                {"type": "prefix-cache-scorer"},
                 {"type": "active-request-scorer"},
                 {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 750000}},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
                 {"type": "weighted-random-picker", "name": "prefill-picker"},
-                {"type": "weighted-random-picker", "name": "decode-picker"},
+                {"type": "max-score-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
                 {
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
-                        {"pluginRef": "concurrency-detector"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
-                        {"pluginRef": "prefix-cache-scorer", "weight": 5},
-                        {"pluginRef": "token-load-scorer", "weight": 5},
+                        {"pluginRef": "token-load-scorer"},
                         {"pluginRef": "prefill-picker"},
                     ],
                 },
