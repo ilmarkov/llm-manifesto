@@ -51,7 +51,23 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "parameters": {"peakPrefillThroughput": 80000, "maxTTFTPenaltyMs": 5000},
                 },
                 {"type": "active-request-scorer"},
-                {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 750000}},
+                # queueThresholdTokens: anchored to this deployment's own per-rank
+                # GPU KV cache capacity (logged: 1,992,761 tokens for EP8 prefill
+                # DP ranks on DSV4-Pro/GB200). The prior 750000 was ~38% of that
+                # capacity, so InFlightLoad+UncachedRequestTokens saturated the
+                # score to 0 for ~all endpoints almost immediately (confirmed via
+                # EPP logs on the c160 v6 sweep: 99% of TokenLoadScorer decisions
+                # were tokenLoad clamped at 750000 -> score 0), destroying the
+                # scorer's discriminating power and leaving prefill routing close
+                # to a random pick among whatever survived the affinity filter.
+                # 2000000 puts our typical 8-12 req/rank @ ~80k p50 ISL operating
+                # point (640k-960k tokens) in the middle of the score range
+                # (~0.52-0.68) instead of clamped at the ceiling, while still
+                # saturating to 0 once backlog genuinely exceeds what a rank can
+                # physically hold resident. Re-check the tokenLoad/score
+                # distribution in EPP logs on the next sweep before adjusting
+                # further.
+                {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 2000000}},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
                 {"type": "weighted-random-picker", "name": "prefill-picker"},
