@@ -22,55 +22,133 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
                 {
+                    # autoTune disabled: it reads real per-pod capacity from vLLM's
+                    # vllm:cache_config_info metric, but that metric is never emitted
+                    # by our vLLM build (checked live: 54 metric families on
+                    # /metrics, none matching cache_config_info/num_gpu_blocks) --
+                    # autoTune was silently falling back to the plugin's static
+                    # default (31250 blocks * our 256 blockSizeTokens = 8M tokens)
+                    # regardless. Even if the metric worked, autoTune only ever
+                    # reads num_gpu_blocks -- it has no concept of CPU-offloaded
+                    # capacity, so it would still only model the GPU tier.
+                    #
+                    # lruCapacityPerServer derived from live prefill logs
+                    # (ilmarkov-vllm-ep8-prefill-dspark-0, gpu-memory-utilization
+                    # 0.97, --block-size 256):
+                    #   GPU KV cache:  3,089,495 tokens/rank (kv_cache_utils.py log)
+                    #   CPU offload:  34,952 blocks x 256 tok/block = 8,947,712
+                    #     tokens/rank (SimpleCPUOffloadConnector, cpu_bytes_to_use=
+                    #     42949672960 = 40 GiB/rank; unchanged by gpu-memory-utilization)
+                    #   combined:     12,037,207 tokens/rank -> /256 ~= 47,020 blocks
+                    # Mooncake (also configured, enable_offload=false) excluded --
+                    # it's an external/read-only tier for this pod, not local
+                    # retention. Decode has no CPU-offload connector at all, but
+                    # the decode profile doesn't consume prefix-cache-affinity-filter
+                    # /prefix-cache-scorer, so this value only matters for prefill.
+                    # Re-derive if gpu-memory-utilization, cpu_bytes_to_use, or
+                    # --block-size change.
                     "type": "approx-prefix-cache-producer",
                     "parameters": {
+                        "autoTune": False,
                         "blockSizeTokens": 256,
                         "maxPrefixTokensToMatch": 1048576,
                         "maxPrefixBlocksToMatch": 4096,
+                        "lruCapacityPerServer": 47020,
                     },
                 },
-                # Explicit instance (not auto-injected): llm-d-router v0.9.0 only registers
-                # inflight-load-producer as the default producer for InFlightLoadDataKey, not
-                # for UncachedRequestTokensDataKey, even though it produces both. Without this
-                # explicit declaration, EPP fails to start when token-load-scorer (the only
-                # consumer of UncachedRequestTokensDataKey) is configured.
-                {"type": "inflight-load-producer"},
                 {
-                    # peakPrefillThroughput: log-derived from results/dsv4-pro's
-                    # -v1 prefill_0.log (Reqs Running:1, Deferred:0 solo/unchunked
-                    # windows) -- real sustained per-rank peak is ~57-75k tok/s;
-                    # matches the dp_enabled path's already-calibrated 80000 below.
-                    # maxTTFTPenaltyMs pinned at the llm-d-router default (5000ms)
-                    # rather than left implicit; NOT yet validated at c160-256 --
-                    # a static ms budget doesn't scale with concurrency, so this
-                    # gate could under-fire (pileup, low peakPrefillThroughput) or
-                    # over-fire (loses affinity right when we need it) at that
-                    # range. Re-check local_hit_pct + TTFT tails together on the
-                    # next c160-256 sweep before adjusting further.
+                    #
+                    # peakPrefillThroughput re-calibrated with
+                    # llm-d's official recipe (guides/recipes/router/
+                    # calibration/calibrate.sh) run against this exact live
+                    # deployment: sequential 8192-token (= our prefill
+                    # max_num_batched_tokens) random-token-ID requests via the
+                    # real gateway path, guaranteed cache miss, median TTFT
+                    # 1.7124s -> 4783 tok/s. The old 200000 (and v6's 80000)
+                    # were both derived from active_prefill_throughput, an
+                    # *aggregate concurrent-batched* metric -- a fundamentally
+                    # different regime from this plugin's intended semantics
+                    # (single in-flight request draining a backlog). The
+                    # calibrated value is ~15-40x lower than either prior
+                    # guess. Re-run calibrate.sh if max_num_batched_tokens or
+                    # hardware changes.
+                    #
+                    # maxTTFTPenaltyMs re-derived from live gate
+                    # telemetry: ran a 900s c192 benchmark against this exact
+                    # deployment with EPP at -v=4 and captured every
+                    # PrefixCacheAffinityFilter decision via continuous
+                    # `kubectl logs -f` (retroactive `kubectl logs --since`
+                    # doesn't work here -- at -v=4 the pod emits ~270
+                    # lines/sec and container log rotation evicts anything
+                    # older than a few minutes). Across 11,767 prefill
+                    # scheduling decisions: 15.7% had no sticky candidate,
+                    # 24.2% held stickiness, and 60.1% broke it via the TTFT
+                    # load gate at the plugin's default 5000ms -- i.e. cache
+                    # affinity was actually honored only ~1 in 4 times.
+                    # Penalty-when-broken distribution: median 17.4s over
+                    # budget, p75 26.1s, p90 36.0s, p99 202s (max 527s).
+                    # Recomputed breaking rate at higher thresholds: 15000ms
+                    # -> 42.1%, 25000ms -> 19.5%, 30000ms -> 12.6%, 40000ms
+                    # -> 5.0%, 60000ms -> 1.9%. Picked 30000ms to keep the
+                    # gate as a safety valve for genuinely severe (p75+)
+                    # imbalances while letting affinity hold for the routine
+                    # variance that was previously discarding it most of the
+                    # time. When gate held, avg sticky candidates was 1.009
+                    # of 8 -- each conversation really does have one clear
+                    # home rank, so honoring stickiness is high-value here.
+                    # Re-capture live telemetry (same method) if
+                    # peakPrefillThroughput or the affinity/load-scoring mix
+                    # changes materially.
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 80000, "maxTTFTPenaltyMs": 5000},
+                    "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
+                },
+                {
+                    # Removed prefix-cache-scorer, active-request-scorer, and
+                    # queue-scorer from the prefill profile 2026-08-20: with
+                    # the affinity filter already narrowing to ~1 sticky
+                    # candidate whenever the TTFT gate holds (24.2% of
+                    # decisions, avg 1.009 sticky/8), a scorer had nothing
+                    # left to discriminate in that case. Worse, in the
+                    # ~12.6% of decisions where the gate breaks specifically
+                    # because the sticky endpoint is overloaded,
+                    # prefix-cache-scorer's weight-10 cache-match signal
+                    # fought the filter's own decision by re-biasing straight
+                    # back toward that same overloaded endpoint. Replaced
+                    # with token-load-scorer alone -- a single load signal
+                    # denominated in the same tokens/InFlightLoad terms as
+                    # the filter's own TTFT gate, rather than the coarser
+                    # kv-cache-utilization/active-request/queue proxies.
+                    # Trade-off accepted: in the 15.7% of decisions with no
+                    # sticky candidate at all, we lose prefix-cache-scorer's
+                    # graded partial-match tiebreak and fall back to pure
+                    # load-balancing.
+                    #
+                    # queueThresholdTokens re-derived from the same live
+                    # prefill logs used for lruCapacityPerServer above
+                    # (gpu-memory-utilization 0.97): GPU KV cache 3,089,495
+                    # tokens/rank. Rounded to 3,000,000 tokens as the "fully
+                    # loaded" normalization point for scoring. NOT yet
+                    # live-calibrated against real gate/queue telemetry the
+                    # way maxTTFTPenaltyMs was -- worth re-checking with the
+                    # same kubectl-logs-capture method if scores look
+                    # degenerate (e.g. many ties at score 0 the way the old
+                    # 750000 queueThresholdTokens did before).
+                    "type": "token-load-scorer",
+                    "parameters": {"queueThresholdTokens": 3000000},
                 },
                 {"type": "active-request-scorer"},
-                # queueThresholdTokens: anchored to this deployment's own per-rank
-                # GPU KV cache capacity (logged: 1,992,761 tokens for EP8 prefill
-                # DP ranks on DSV4-Pro/GB200). The prior 750000 was ~38% of that
-                # capacity, so InFlightLoad+UncachedRequestTokens saturated the
-                # score to 0 for ~all endpoints almost immediately (confirmed via
-                # EPP logs on the c160 v6 sweep: 99% of TokenLoadScorer decisions
-                # were tokenLoad clamped at 750000 -> score 0), destroying the
-                # scorer's discriminating power and leaving prefill routing close
-                # to a random pick among whatever survived the affinity filter.
-                # 2000000 puts our typical 8-12 req/rank @ ~80k p50 ISL operating
-                # point (640k-960k tokens) in the middle of the score range
-                # (~0.52-0.68) instead of clamped at the ceiling, while still
-                # saturating to 0 once backlog genuinely exceeds what a rank can
-                # physically hold resident. Re-check the tokenLoad/score
-                # distribution in EPP logs on the next sweep before adjusting
-                # further.
-                {"type": "token-load-scorer", "parameters": {"queueThresholdTokens": 2000000}},
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                {"type": "weighted-random-picker", "name": "prefill-picker"},
+                # max-score on both: deterministic, always honors the best
+                # cache-match/load score instead of diluting it with randomness.
+                # Decode has no cache locality to protect, but live per-rank
+                # metrics (queue depth ~0.1, KV util 31-36%, running requests
+                # within +-6% across all 8 ranks) show it's already flat under
+                # weighted-random and isn't the bottleneck, so the theoretical
+                # hot-spotting risk of greedy picking isn't materializing here
+                # (single EPP replica, only 8 decode endpoints, scorer signals
+                # already well-behaved) -- switched to max-score for decode too.
+                {"type": "max-score-picker", "name": "prefill-picker"},
                 {"type": "max-score-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
@@ -87,7 +165,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "decode",
                     "plugins": [
                         {"pluginRef": "decode-filter"},
-                        {"pluginRef": "active-request-scorer", "weight": 2},
+                        {"pluginRef": "active-request-scorer"},
                         {"pluginRef": "decode-picker"},
                     ],
                 },
