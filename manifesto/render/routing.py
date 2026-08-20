@@ -22,6 +22,25 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
                 {
+                    # Required explicitly: token-load-scorer consumes both
+                    # InFlightLoadDataKey (auto-injectable -- registered as
+                    # the default producer for that key) and
+                    # UncachedRequestTokensDataKey (NOT auto-injectable --
+                    # no default producer is registered for it anywhere in
+                    # llm-d-router). Without this declaration EPP fails at
+                    # startup: "failed to create missing data producers - no
+                    # default producer found for missing data key:
+                    # UncachedRequestTokensDataKey/inflight-load-producer,
+                    # which is consumed by: token-load-scorer" (confirmed via
+                    # live CrashLoopBackOff on the v9 rollout). No name or
+                    # parameters needed: the default (unnamed) instance
+                    # produces both keys under the plugin's type name
+                    # "inflight-load-producer", which is exactly what
+                    # token-load-scorer looks up when its own
+                    # inFlightLoadProducerName is left unset.
+                    "type": "inflight-load-producer",
+                },
+                {
                     # autoTune disabled: it reads real per-pod capacity from vLLM's
                     # vllm:cache_config_info metric, but that metric is never emitted
                     # by our vLLM build (checked live: 54 metric families on
