@@ -129,7 +129,12 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                     f"--vllm-port={resolved.ports.backend[0]}",
                     f"--data-parallel-size={resolved.ports.rank_count}",
                     "--secure-proxy=false",
-                    "--connector=nixlv2",
+                    # v0.10.0 removed the deprecated `--connector` alias
+                    # (llm-d-router options.go); use --kv-connector, its
+                    # replacement, or pd-sidecar exits immediately on an
+                    # unrecognized flag (pflag defaults to ExitOnError),
+                    # crash-looping the decode pod's routing-proxy sidecar.
+                    "--kv-connector=nixlv2",
                 ],
                 "ports": [
                     {"containerPort": port, "name": f"rank{idx}", "protocol": "TCP"}
