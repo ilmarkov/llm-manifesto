@@ -257,16 +257,33 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 },
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                # max-score on both: deterministic, always honors the best
-                # cache-match/load score instead of diluting it with randomness.
-                # Decode has no cache locality to protect, but live per-rank
-                # metrics (queue depth ~0.1, KV util 31-36%, running requests
-                # within +-6% across all 8 ranks) show it's already flat under
-                # weighted-random and isn't the bottleneck, so the theoretical
-                # hot-spotting risk of greedy picking isn't materializing here
-                # (single EPP replica, only 8 decode endpoints, scorer signals
-                # already well-behaved) -- switched to max-score for decode too.
-                {"type": "max-score-picker", "name": "prefill-picker"},
+                # Prefill switched to weighted-random 2026-08-21 after v11 c192
+                # showed the hot-spotting risk *does* materialize: live EPP
+                # telemetry caught ~130 near-simultaneous new-session requests
+                # converging onto a single rank (pod0-1/r2) within one ~15s
+                # window, because a shared-prefix batch scored that one rank
+                # far above its 7 idle peers, and max-score-picker gave 100% of
+                # those ties to it deterministically. token-load-scorer/
+                # queue-scorer can't correct for this in time -- both rely on
+                # signals that only reflect a decision's load impact *after*
+                # that decision's own pipeline completes, so all ~130
+                # concurrent decisions raced against the same stale
+                # pre-burst snapshot. weighted-random-picker turns that
+                # deterministic 100%-to-one-rank tie into a probability-
+                # weighted split across the top-scoring candidates, so a
+                # shared-prefix burst gets spread across a handful of ranks
+                # instead of dog-piling one. Cost: some cache-match quality is
+                # sacrificed for load spread, same trade-off already accepted
+                # for the fallback scorers above.
+                #
+                # Decode stays on max-score-picker: no cache locality to
+                # protect there, and live per-rank metrics (queue depth ~0.1,
+                # KV util 31-36%, running requests within +-6% across all 8
+                # ranks) show it's already flat -- the hot-spotting mechanism
+                # needs a shared-affinity signal to create ties in the first
+                # place, which decode's active-request-scorer alone doesn't
+                # produce.
+                {"type": "weighted-random-picker", "name": "prefill-picker"},
                 {"type": "max-score-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
