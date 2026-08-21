@@ -486,6 +486,8 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                     "--grpc-port=9002",
                                     f"--pool-name={infpool_name}",
                                     f"--pool-namespace={spec.namespace}",
+                                    # Required as of v0.10.0 for utilization-filter
+                                    "--allow-experimental-plugins=true",
                                 ],
                                 "ports": [{"containerPort": 9002, "name": "grpc"}],
                                 "volumeMounts": [
