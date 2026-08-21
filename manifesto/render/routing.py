@@ -21,44 +21,26 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
             "plugins": [
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
-                {
-                    # Added 2026-08-21 as a hard backstop against rank pileups
-                    # (root cause: prefix-cache-scorer's partial-match rich-
-                    # get-richer feeding one rank, compounded by inflight-load-
-                    # producer's old 5-min PluginState staleness bug masking
-                    # that rank's true load -- see prefix-cache-scorer/
-                    # queue-scorer comments below). That staleness bug is now
-                    # fixed properly by BindLiveness in the v0.10.0 image bump
-                    # (llm-d/llm-d-router#2313); this filter is a second,
-                    # independent line of defense that doesn't depend on any
-                    # InFlightLoad estimate at all -- it reads vLLM's real
-                    # num_requests_waiting directly.
-                    #
-                    # Cap of 40 chosen from live v10 c192 data: healthy ranks
-                    # transiently peaked at 45-76 waiting requests in the
-                    # first ~1-2 min of ramp-up before draining to single
-                    # digits within ~15-20 min, while the pathological ranks
-                    # plateaued at 40-93 for 18+ minutes without ever
-                    # draining. 40 sits at that empirical boundary -- low
-                    # enough to catch a rank that's failing to drain, high
-                    # enough not to flag the normal startup burst on its own.
-                    # fallbackOnEmpty keeps requests routable even if every
-                    # candidate is simultaneously over 40 mid-burst.
-                    #
-                    # Placed *before* prefix-cache-affinity-filter in the
-                    # prefill profile (see schedulingProfiles below), not
-                    # after: once the affinity filter narrows to a single
-                    # sticky candidate, a filter running later only ever sees
-                    # that one endpoint and can't exclude it -- an overloaded
-                    # rank has to be filtered out before stickiness locks in,
-                    # not after.
-                    "type": "utilization-filter",
-                    "name": "prefill-queue-limiter",
-                    "parameters": {
-                        "conditions": [{"metric": "waiting-queue", "maxValue": 40}],
-                        "fallbackOnEmpty": True,
-                    },
-                },
+                # Removed 2026-08-21 (prefill-queue-limiter / utilization-
+                # filter, cap 40): live v12 c192 data showed the queue-
+                # balancing changes above (queue-scorer, higher
+                # queueThresholdTokens) succeeded in eliminating the old
+                # single-rank pileup -- but pushed *typical* per-rank
+                # waiting-queue depth up to 24-27 avg across all 8 ranks
+                # (vs v10's 7-12 on 7 healthy ranks), so this filter's cap=40
+                # was now being crossed 17-22% of the time on *every* rank
+                # instead of just the one pathological rank it was designed
+                # for. Placed before prefix-cache-affinity-filter (by design,
+                # to exclude overloaded ranks before stickiness locks in), it
+                # was routinely excluding the cache-affine rank itself,
+                # breaking locality broadly: prefill local hit rate collapsed
+                # 77.8% (v10 c192) -> 19.2% (v12 c192), true recompute nearly
+                # doubled (6.9% -> 14.6%), TTFT avg roughly tripled (22.5s ->
+                # 66.4s), throughput dropped 42% (7147 -> 4142 tok/s) -- all
+                # while ITL stayed flat, confirming decode/capacity weren't
+                # the cause. Re-add only with a cap re-derived from the
+                # *current* per-rank operating range (not v10's stale
+                # baseline) if single-rank pileups reappear.
                 {
                     # Required explicitly: token-load-scorer consumes both
                     # InFlightLoadDataKey (auto-injectable -- registered as
@@ -92,11 +74,14 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     # lruCapacityPerServer derived from live prefill logs
                     # (ilmarkov-vllm-ep8-prefill-dspark-0, gpu-memory-utilization
                     # 0.97, --block-size 256):
-                    #   GPU KV cache:  3,089,495 tokens/rank (kv_cache_utils.py log)
-                    #   CPU offload:  34,952 blocks x 256 tok/block = 8,947,712
+                    #   GPU KV cache:  3,089,495 tokens/rank (kv_cache_utils.py log,
+                    #     unchanged since gpu-memory-utilization didn't change)
+                    #   CPU offload:  33,204 blocks x 256 tok/block = 8,500,224
                     #     tokens/rank (SimpleCPUOffloadConnector, cpu_bytes_to_use=
-                    #     42949672960 = 40 GiB/rank; unchanged by gpu-memory-utilization)
-                    #   combined:     12,037,207 tokens/rank -> /256 ~= 47,020 blocks
+                    #     40802189312 = 38 GiB/rank as of the 2026-08-21 mooncake/
+                    #     cpu-offload rebalance -- down from 40 GiB/34,952 blocks;
+                    #     confirmed live via worker.py:208 "33204 CPU blocks (38.00 GB)")
+                    #   combined:     11,589,719 tokens/rank -> /256 ~= 45,272 blocks
                     # Mooncake (also configured, enable_offload=false) excluded --
                     # it's an external/read-only tier for this pod, not local
                     # retention. Decode has no CPU-offload connector at all, but
@@ -110,7 +95,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                         "blockSizeTokens": 256,
                         "maxPrefixTokensToMatch": 1048576,
                         "maxPrefixBlocksToMatch": 4096,
-                        "lruCapacityPerServer": 47020,
+                        "lruCapacityPerServer": 45272,
                     },
                 },
                 {
@@ -257,33 +242,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 },
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                # Prefill switched to weighted-random 2026-08-21 after v11 c192
-                # showed the hot-spotting risk *does* materialize: live EPP
-                # telemetry caught ~130 near-simultaneous new-session requests
-                # converging onto a single rank (pod0-1/r2) within one ~15s
-                # window, because a shared-prefix batch scored that one rank
-                # far above its 7 idle peers, and max-score-picker gave 100% of
-                # those ties to it deterministically. token-load-scorer/
-                # queue-scorer can't correct for this in time -- both rely on
-                # signals that only reflect a decision's load impact *after*
-                # that decision's own pipeline completes, so all ~130
-                # concurrent decisions raced against the same stale
-                # pre-burst snapshot. weighted-random-picker turns that
-                # deterministic 100%-to-one-rank tie into a probability-
-                # weighted split across the top-scoring candidates, so a
-                # shared-prefix burst gets spread across a handful of ranks
-                # instead of dog-piling one. Cost: some cache-match quality is
-                # sacrificed for load spread, same trade-off already accepted
-                # for the fallback scorers above.
-                #
-                # Decode stays on max-score-picker: no cache locality to
-                # protect there, and live per-rank metrics (queue depth ~0.1,
-                # KV util 31-36%, running requests within +-6% across all 8
-                # ranks) show it's already flat -- the hot-spotting mechanism
-                # needs a shared-affinity signal to create ties in the first
-                # place, which decode's active-request-scorer alone doesn't
-                # produce.
-                {"type": "weighted-random-picker", "name": "prefill-picker"},
+                {"type": "max-score-picker", "name": "prefill-picker"},
                 {"type": "max-score-picker", "name": "decode-picker"},
             ],
             "schedulingProfiles": [
@@ -291,7 +250,6 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
-                        {"pluginRef": "prefill-queue-limiter"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
                         {"pluginRef": "prefix-cache-scorer", "weight": 6},
                         {"pluginRef": "token-load-scorer", "weight": 3},
@@ -503,8 +461,6 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                     "--grpc-port=9002",
                                     f"--pool-name={infpool_name}",
                                     f"--pool-namespace={spec.namespace}",
-                                    # Required as of v0.10.0 for utilization-filter
-                                    "--allow-experimental-plugins=true",
                                 ],
                                 "ports": [{"containerPort": 9002, "name": "grpc"}],
                                 "volumeMounts": [
