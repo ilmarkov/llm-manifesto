@@ -122,26 +122,38 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
                 },
                 {
-                    # Removed prefix-cache-scorer, active-request-scorer, and
-                    # queue-scorer from the prefill profile 2026-08-20: with
-                    # the affinity filter already narrowing to ~1 sticky
-                    # candidate whenever the TTFT gate holds (24.2% of
-                    # decisions, avg 1.009 sticky/8), a scorer had nothing
-                    # left to discriminate in that case. Worse, in the
-                    # ~12.6% of decisions where the gate breaks specifically
-                    # because the sticky endpoint is overloaded,
-                    # prefix-cache-scorer's weight-10 cache-match signal
-                    # fought the filter's own decision by re-biasing straight
-                    # back toward that same overloaded endpoint. Replaced
-                    # with token-load-scorer alone -- a single load signal
-                    # denominated in the same tokens/InFlightLoad terms as
-                    # the filter's own TTFT gate, rather than the coarser
-                    # kv-cache-utilization/active-request/queue proxies.
-                    # Trade-off accepted: in the 15.7% of decisions with no
-                    # sticky candidate at all, we lose prefix-cache-scorer's
-                    # graded partial-match tiebreak and fall back to pure
-                    # load-balancing.
-                    #
+                    # Re-added 2026-08-21 after v9 regressed hard vs v7
+                    # (c160: TTFT p50 31.4s vs v7's 5.9s, throughput 4530
+                    # vs 6902 tok/s -- despite v9 having *more* prefill KV
+                    # cache than v7, ruling out capacity as the cause).
+                    # Root cause: removing this scorer left every decision
+                    # outside strict stickiness with zero cache-awareness.
+                    # Live-captured EPP logs (default verbosity -- token-
+                    # load-scorer already logs one line per candidate at
+                    # info level, no -v=4 needed) over 123 real prefill
+                    # decisions from the live c192 run: only 26.8% narrowed
+                    # to 1 sticky candidate; 73.2% saw 2-8 candidates, incl.
+                    # 30.9% seeing all 8 (full fallback to token-load-scorer
+                    # alone). Token-load spread across candidates in those
+                    # non-narrowed decisions: median 213k, p90 625k tokens --
+                    # both above the current gate's break threshold
+                    # (maxTTFTPenaltyMs 30000 * peakPrefillThroughput 4783 /
+                    # 1000 = ~143k tokens), confirming the gate is firing
+                    # well inside ambient load variance, not just on extreme
+                    # imbalances. So most decisions were being made by
+                    # token-load-scorer alone, with no partial-cache-match
+                    # tiebreak, actively scattering conversation continuity
+                    # across ranks. Weight 6 (vs token-load-scorer's 2) is
+                    # the last live-validated ratio from before the removal
+                    # -- high enough to dominate when candidates differ in
+                    # cache match, but not so high it re-fights the load
+                    # scorer's signal outright. NOT re-touching
+                    # maxTTFTPenaltyMs/peakPrefillThroughput in this change;
+                    # revisit those separately if this alone doesn't recover
+                    # v7-level local hit rates.
+                    "type": "prefix-cache-scorer",
+                },
+                {
                     # queueThresholdTokens re-derived from the same live
                     # prefill logs used for lruCapacityPerServer above
                     # (gpu-memory-utilization 0.97): GPU KV cache 3,089,495
@@ -176,7 +188,8 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
-                        {"pluginRef": "token-load-scorer"},
+                        {"pluginRef": "prefix-cache-scorer", "weight": 6},
+                        {"pluginRef": "token-load-scorer", "weight": 2},
                         {"pluginRef": "prefill-picker"},
                     ],
                 },
