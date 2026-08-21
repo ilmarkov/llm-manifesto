@@ -4,9 +4,41 @@ vllm:
   nightly: vllm/vllm-openai:nightly-49f31d7cee425a6d38f8c5bc76877986daf832ed
   # InferenceX PR #2260 GB200 AgentX pin (canonical DeepSeek-V4-Pro checkpoint).
   ix: vllm/vllm-openai:nightly-dev-arm64-cu13.0.1-c188b96
+  # Post-dates the DeepSeek-V4 fp8_ds_mla SWA KV-cache kv_quant_mode fixes
+  # (vllm-project/vllm#47716 merged 07-06, #48379 merged 07-15, and their
+  # follow-ups #48642/#48907/#48026) that resolve the
+  # "shape '[-1, 64, 512]' is invalid for input of size ..." crash seen with
+  # dspark + kv_cache_dtype=fp8 on DeepSeek-V4 sparse MLA.
+  # NOTE: nightly-<sha> tags are commit-tagged CI builds that Docker Hub only
+  # retains for a rolling ~2 week window before GC'ing them, so any pin here
+  # will eventually 404 (manifest unknown) and needs to be re-pointed at a
+  # still-live nightly-<sha> tag (check https://hub.docker.com/r/vllm/vllm-openai/tags).
+  # DEAD as of 2026-08-09 (GC'd) — kept for historical reference only, do not use.
+  nightly_2026-07-28: vllm/vllm-openai:nightly-d223c900d85224c02f2162ee2c757a769e99f519
+  nightly_2026-08-03: vllm/vllm-openai:nightly-5e35a6f4f9bbc217c599692157ca985c894373f7
+  nightly_2026-08-04: vllm/vllm-openai:nightly-cb8104839c141609d99f1254459ef3a4f1bd4263
+  nightly_2026-08-05: vllm/vllm-openai:nightly-7794b1e08bf505ff28664515ffaaeeec955ab796
+  pinned_nightly_2026-08-07: quay.io/rh-ee-imarkov/vllm-openai:nightly-700d39b55813fce6fe5339b334beb55d2a39f598
+  # Includes vllm-project/vllm#50869 (reapplied via #52223) and #47808 (DSpark
+  # confidence-scheduled verification). First nightly after both landed.
+  pinned_nightly_2026-08-14: quay.io/rh-ee-imarkov/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9
+  pinned_nightly_2026-08-14-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8a102759ba2786dd2813564f1d77029d1c770f73
+  nightly_2026-08-12: vllm/vllm-openai:nightly-3ee2df30337a301164c46ae444b76ee67e71c106
+  # fixed_nightly: quay.io/rh-ee-imarkov/vllm-openai:a3cea7c214
 
 llm_d:
-  release: v0.9.0
+  # v0.10.0: picks up BindLiveness (llm-d/llm-d-router#2313) -- the
+  # inflight-load-producer's PluginState entries are no longer reaped by the
+  # 5-minute janitor TTL while the request's own ext_proc stream is still
+  # alive, fixing the false "idle" load signal on deeply-queued prefill ranks
+  # (confirmed root cause of the v10 rank7 pileup). Verified the plugins we
+  # actually use (prefix-cache-affinity-filter, prefix-cache-scorer,
+  # token-load-scorer, active-request-scorer, approx-prefix-cache-producer,
+  # inflight-load-producer, disagg-profile-handler/disagg-headers-handler,
+  # max-score-picker) only gained additive/backward-compatible config between
+  # v0.9.0 and v0.10.0. Not yet audited: routing_sidecar's own v0.9.0->v0.10.0
+  # diff (34 files) -- watch the P->D NIXL transfer path after this bump.
+  release: v0.10.0
   epp: ghcr.io/llm-d/llm-d-router-endpoint-picker:{release}
   routing_sidecar: ghcr.io/llm-d/llm-d-router-disagg-sidecar:{release}
 

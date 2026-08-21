@@ -22,6 +22,44 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
                 {
+                    # Added 2026-08-21 as a hard backstop against rank pileups
+                    # (root cause: prefix-cache-scorer's partial-match rich-
+                    # get-richer feeding one rank, compounded by inflight-load-
+                    # producer's old 5-min PluginState staleness bug masking
+                    # that rank's true load -- see prefix-cache-scorer/
+                    # queue-scorer comments below). That staleness bug is now
+                    # fixed properly by BindLiveness in the v0.10.0 image bump
+                    # (llm-d/llm-d-router#2313); this filter is a second,
+                    # independent line of defense that doesn't depend on any
+                    # InFlightLoad estimate at all -- it reads vLLM's real
+                    # num_requests_waiting directly.
+                    #
+                    # Cap of 40 chosen from live v10 c192 data: healthy ranks
+                    # transiently peaked at 45-76 waiting requests in the
+                    # first ~1-2 min of ramp-up before draining to single
+                    # digits within ~15-20 min, while the pathological ranks
+                    # plateaued at 40-93 for 18+ minutes without ever
+                    # draining. 40 sits at that empirical boundary -- low
+                    # enough to catch a rank that's failing to drain, high
+                    # enough not to flag the normal startup burst on its own.
+                    # fallbackOnEmpty keeps requests routable even if every
+                    # candidate is simultaneously over 40 mid-burst.
+                    #
+                    # Placed *before* prefix-cache-affinity-filter in the
+                    # prefill profile (see schedulingProfiles below), not
+                    # after: once the affinity filter narrows to a single
+                    # sticky candidate, a filter running later only ever sees
+                    # that one endpoint and can't exclude it -- an overloaded
+                    # rank has to be filtered out before stickiness locks in,
+                    # not after.
+                    "type": "utilization-filter",
+                    "name": "prefill-queue-limiter",
+                    "parameters": {
+                        "conditions": [{"metric": "waiting-queue", "maxValue": 40}],
+                        "fallbackOnEmpty": True,
+                    },
+                },
+                {
                     # Required explicitly: token-load-scorer consumes both
                     # InFlightLoadDataKey (auto-injectable -- registered as
                     # the default producer for that key) and
@@ -168,6 +206,55 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "parameters": {"queueThresholdTokens": 3000000},
                 },
                 {"type": "active-request-scorer"},
+                {
+                    # Added 2026-08-21 to prefill after diagnosing a persistent
+                    # 2-rank pileup (v10 c192: ranks 1/4 stuck at 40-90 waiting
+                    # while the other 6 drained to ~0). Root cause: prefix-cache-
+                    # scorer's MatchBlocks/TotalBlocks score is continuous and not
+                    # gated by the filter's 0.80 affinityThreshold, so even before
+                    # any endpoint is "sticky" it creates a rich-get-richer pull
+                    # toward whichever rank first captures a slice of a shared
+                    # prefix (this workload is agentic subagent trees with a
+                    # common root-context prefix across many branches). v8 had
+                    # the same mechanism but kept it smaller-scale (worst rank
+                    # ~55 vs v10's ~93) because its combined load-scorer weight
+                    # (kv-util 2 + active-request 2 + queue 2 = 6) roughly matched
+                    # its cache weight (10), a 1.67:1 ratio -- vs v10's 3:1
+                    # (prefix-cache-scorer 6 : token-load-scorer 2 alone) before
+                    # this change. queue-scorer specifically restores a signal
+                    # sourced directly from vLLM's own num_requests_waiting,
+                    # immune to the inflight-load-producer 5-minute PluginState
+                    # staleness reaping that silently zeroes out token-load-
+                    # scorer's view of long-queued (not-yet-first-token)
+                    # requests -- exactly the case on the pathological ranks.
+                    #
+                    # Note: this weight only matters in the "fallback" case
+                    # where prefix-cache-affinity-filter's own 0.80
+                    # affinityThreshold gate found no fully-sticky candidate
+                    # and handed all 8 endpoints to the scorers -- exactly the
+                    # partial-match regime (this workload's subagent trees
+                    # share large root-context prefixes well before any one
+                    # branch crosses 80%) where the rich-get-richer
+                    # concentration originates. When the filter does find a
+                    # sticky candidate, it narrows to ~1 endpoint before
+                    # scorers run, so these weights don't affect that (already
+                    # working well) path at all.
+                    #
+                    # Weight raised to 3 (both token-load-scorer and
+                    # queue-scorer) after weight=2 was deployed and diagnosed
+                    # live on the v10 c192 run: cache:load ratio of 6:4 (1.5:1)
+                    # was still cache-leaning vs v8's 1.67:1, but v8 *itself*
+                    # showed the same pathology at smaller scale (worst rank
+                    # ~55 vs v10's ~93 before this scorer was even added) --
+                    # so matching v8's ratio alone wasn't expected to be
+                    # enough. Went to 3+3=6, a 6:6 (1:1) ratio, giving load-
+                    # balancing equal say against cache-affinity in the
+                    # contested fallback regime. Trade-off: some legitimate
+                    # partial-prefix reuse across subagent branches will now
+                    # get scattered instead of consolidated, but the observed
+                    # downside (severe per-rank queue skew) outweighed that.
+                    "type": "queue-scorer",
+                },
                 {"type": "always-disagg-pd-decider"},
                 {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
                 # max-score on both: deterministic, always honors the best
@@ -187,9 +274,11 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
+                        {"pluginRef": "prefill-queue-limiter"},
                         {"pluginRef": "prefix-cache-affinity-filter"},
                         {"pluginRef": "prefix-cache-scorer", "weight": 6},
-                        {"pluginRef": "token-load-scorer", "weight": 2},
+                        {"pluginRef": "token-load-scorer", "weight": 3},
+                        {"pluginRef": "queue-scorer", "weight": 3},
                         {"pluginRef": "prefill-picker"},
                     ],
                 },
