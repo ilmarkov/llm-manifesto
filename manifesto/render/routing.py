@@ -539,9 +539,20 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                         # branch hasn't locally patched
                                         # tokenizer/renderer/parser code for
                                         # this model (verified true as of
-                                        # 2026-08-22).
+                                        # 2026-08-22). Must be the dedicated
+                                        # `-cpu` build, not the CUDA-targeted
+                                        # vllm-openai image: vLLM's platform
+                                        # auto-detection only activates
+                                        # CpuPlatform if the installed
+                                        # package's version string is tagged
+                                        # `+cpu` (or on macOS) -- on a plain
+                                        # CUDA build with no GPU present, it
+                                        # resolves to UnspecifiedPlatform and
+                                        # crashes with "Failed to infer
+                                        # device type" instead of falling
+                                        # back to CPU.
                                         "name": "vllm-render",
-                                        "image": spec.routing.render_image or "vllm/vllm-openai:latest",
+                                        "image": spec.routing.render_image or "vllm/vllm-openai-cpu:latest",
                                         "imagePullPolicy": "Always",
                                         "command": ["vllm", "launch", "render"],
                                         "args": [
