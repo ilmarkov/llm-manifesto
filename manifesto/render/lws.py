@@ -113,6 +113,15 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     ]
     if external_dp:
         container_ports.insert(0, {"containerPort": 8100, "name": "dp-supervisor", "protocol": "TCP"})
+    if role.kv_events_config:
+        # Fixed local range per pod regardless of DP start-rank -- see the
+        # KV_EVENTS_BASE compensation comment in launch.py.
+        kv_events_port = role.kv_events_config.get("port", 5557)
+        local_size = parallel_layout(role).dp_local_size if role.parallelism.dp_enabled else 1
+        container_ports.extend(
+            {"containerPort": kv_events_port + idx, "name": f"kvevents-{idx}", "protocol": "TCP"}
+            for idx in range(local_size)
+        )
     readiness_ports = resolved.ports.public if role.routing_proxy else resolved.ports.backend
 
     init_containers = []

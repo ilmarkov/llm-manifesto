@@ -101,6 +101,11 @@ class RoleSpec(BaseModel):
     routing_proxy: bool = False
     dp_load_balancing: DpLoadBalancing = DpLoadBalancing.INTERNAL
     kv_transfer_config: dict[str, Any] | None = None
+    # Enables vLLM's --kv-events-config for precise-prefix-cache-producer.
+    # Only {"port": <int>} is read today (ZMQ base port before per-rank
+    # compensation); topic/endpoint are computed in launch.py from that port
+    # plus the pod's own address and model name.
+    kv_events_config: dict[str, Any] | None = None
     vllm_args: dict[str, Any] = Field(
         default_factory=dict, validation_alias=AliasChoices("vllm", "vllm_args")
     )

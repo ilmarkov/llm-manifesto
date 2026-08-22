@@ -73,7 +73,19 @@ def render_mooncake(
             },
             "spec": {
                 "selector": instance.labels("mooncake"),
-                "ports": [{"name": "grpc", "port": 50051, "protocol": "TCP"}],
+                "ports": [
+                    {"name": "grpc", "port": 50051, "protocol": "TCP"},
+                    # Master's native Prometheus admin endpoint (/metrics,
+                    # /metrics/summary, /health) -- exposes real eviction
+                    # counters (Eviction: Success/Attempts, AllocFail, keys,
+                    # size) that are otherwise only visible in the periodic
+                    # stdout log. Already scraped cluster-wide by the shared
+                    # Prometheus's `mooncake-master` job (hardcoded to
+                    # <pod_ip>:9003), which discovers by container name, not
+                    # by this Service -- this port is declared here mainly
+                    # for documentation and manual `port-forward` access.
+                    {"name": "metrics", "port": 9003, "protocol": "TCP"},
+                ],
             },
         },
         {
@@ -93,8 +105,22 @@ def render_mooncake(
                             {
                                 "name": "mooncake-master",
                                 "image": cluster.mooncake.master_image,
-                                "command": ["mooncake_master", "--port", "50051"],
-                                "ports": [{"containerPort": 50051, "name": "grpc"}],
+                                "command": [
+                                    "mooncake_master",
+                                    "--port",
+                                    "50051",
+                                    # Explicit even though 9003 is the gflags
+                                    # default -- makes the Prometheus admin
+                                    # endpoint's port a documented contract
+                                    # rather than an implicit default that
+                                    # could silently move on a version bump.
+                                    "--metrics_port",
+                                    "9003",
+                                ],
+                                "ports": [
+                                    {"containerPort": 50051, "name": "grpc"},
+                                    {"containerPort": 9003, "name": "metrics"},
+                                ],
                                 "resources": {
                                     "requests": {"cpu": "2", "memory": "4Gi"},
                                     "limits": {"cpu": "4", "memory": "8Gi"},

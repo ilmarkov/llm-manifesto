@@ -436,11 +436,18 @@ def test_render_mooncake_emits_configmap_service_deployment_when_enabled():
     assert config_json["protocol"] == "rdma"
 
     service = next(obj for obj in result if obj["kind"] == "Service")
-    assert service["spec"]["ports"][0]["port"] == 50051
+    service_ports = {p["name"]: p["port"] for p in service["spec"]["ports"]}
+    assert service_ports == {"grpc": 50051, "metrics": 9003}
 
     deployment = next(obj for obj in result if obj["kind"] == "Deployment")
     container = deployment["spec"]["template"]["spec"]["containers"][0]
-    assert container["command"] == ["mooncake_master", "--port", "50051"]
+    assert container["command"] == [
+        "mooncake_master",
+        "--port",
+        "50051",
+        "--metrics_port",
+        "9003",
+    ]
     assert container["readinessProbe"]["tcpSocket"]["port"] == 50051
 
 
