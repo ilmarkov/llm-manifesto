@@ -523,13 +523,25 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                         # token-producer's vllm backend, so
                                         # precise-prefix-cache-producer gets
                                         # real token IDs without adding load
-                                        # to GPU-serving pods. Same image as
-                                        # the model server (needs the same
-                                        # trust-remote-code/tokenizer-mode to
-                                        # produce hashes that correlate with
-                                        # the engines' own KV-event tokens).
+                                        # to GPU-serving pods. This EPP
+                                        # Deployment is pinned to amd64 nodes
+                                        # (see nodeAffinity above), separate
+                                        # from the arm64 GPU nodepool, so it
+                                        # can't use spec.model.image if that's
+                                        # an arm64-only custom build. Doesn't
+                                        # need our patches though: `--tokenizer
+                                        # -mode` and `vllm launch render` are
+                                        # both plain upstream vLLM features,
+                                        # so any reasonably current public
+                                        # image produces the same token IDs
+                                        # (and thus the same KV-block hashes)
+                                        # as the real engines, as long as our
+                                        # branch hasn't locally patched
+                                        # tokenizer/renderer/parser code for
+                                        # this model (verified true as of
+                                        # 2026-08-22).
                                         "name": "vllm-render",
-                                        "image": spec.model.image,
+                                        "image": spec.routing.render_image or "vllm/vllm-openai:latest",
                                         "imagePullPolicy": "Always",
                                         "command": ["vllm", "launch", "render"],
                                         "args": [
