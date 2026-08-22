@@ -5,7 +5,8 @@ model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
   # image_ref: vllm.ix
-  image_ref: vllm.nightly
+  # image_ref: vllm.nightly_2026-08-05
+  image_ref: vllm.nightly_2026-08-05
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: load_aware, target_role: decode}
@@ -63,7 +64,7 @@ roles:
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 32
       gpu_memory_utilization: "0.92"
-      kv_cache_memory: 37580963840 # 35 GiB
+      # kv_cache_memory: 37580963840 # 35 GiB
       compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
       # not useful
       # enable_prompt_tokens_details: true
@@ -71,6 +72,3 @@ roles:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true
         use_fp4_indexer_cache: true
-      speculative_config:
-        method: mtp
-        num_speculative_tokens: 3

@@ -1,4 +1,27 @@
-# MTP variant of agg-dep8: Aggregated DEP8 with MTP.
-# 2 nodes / 8 GPUs (DP8 + EP). MTP with 3 speculative tokens.
+# MTP variant of agg-dep8: Aggregated DEP8 with native MTP speculative decoding.
+# 2 nodes / 8 GPUs (DP8 + EP). MTP with 3 speculative tokens (matches the
+# speculative_config previously carried directly in ix-agg-dep-base.yaml).
+# v2: disable the Mooncake KV connector (suspected of interacting poorly with
+# MTP's speculative KV rollback) and raise max_cudagraph_capture_size to 96
+# to cover higher-concurrency decode batches (K+1=4 query-tokens/seq).
 extends: ix-agg-dep-base.yaml
-release: ix-agg-dep8-mtp
+release: ix-agg-dep8-mtp-v2-long-v2
+
+mooncake:
+  enabled: false
+
+roles:
+  decode:
+    workload_name: vllm-dep8-agg-mtp
+    kv_transfer_config: $delete
+    vllm:
+      max_cudagraph_capture_size: 76
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 2
+        draft_sample_method: probabilistic
+      # kv_transfer_config:
+      #   kv_connector: SimpleCPUOffloadConnector
+      #   kv_role: kv_both
+      #   kv_connector_extra_config:
+      #     cpu_bytes_to_use: 26843545600

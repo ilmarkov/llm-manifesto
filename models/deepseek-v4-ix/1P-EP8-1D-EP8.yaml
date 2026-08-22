@@ -1,18 +1,17 @@
 # InferenceX: disagg-gb200-1p1d-dep8-dep8-agentic / dsv4-fp4-gb200-dynamo-vllm-agentic-1p1d-dep8-dep8
 # 4 nodes / 16 GPUs. Benchmark conc-list: 64, 128, 192, 256
 extends: ix-disagg-base.yaml
-release: ix-1p-ep8-1d-ep8-v3
+release: ix-1p-ep8-1d-ep8-v3-long
 
 roles:
   prefill:
     lws: {replicas: 1}
     vllm:
-      max_num_seqs: 128
+      max_num_seqs: 64
   decode:
     workload_name: vllm-ep8-decode
     lws: {size: 2}
     parallelism: {tp: 1, dp: 8, ep: true}
     vllm:
-      max_num_seqs: 128
-      max_cudagraph_capture_size: 128
-      speculative_config: $delete
+      max_num_seqs: 64
+      max_cudagraph_capture_size: 64

@@ -1,18 +1,26 @@
-# MTP variant of 2P-EP8-1D-EP12: disagg-gb200-2p1d-dep8-dep12-agentic
-# 7 nodes / 28 GPUs. MTP with 3 speculative tokens.
+# MTP variant of 2P-EP8-1D-EP12: disagg-gb200-2p1d-dep8-dep12-agentic with native MTP speculative decoding.
+# 7 nodes / 28 GPUs. MTP with 1 speculative token on prefill, 2 on decode.
+# max_cudagraph_capture_size bumped 128 -> 160 for MTP (K+1=3 query-tokens/seq on decode).
 extends: ix-disagg-base.yaml
-release: ix-2p-ep8-1d-ep12-mtp
+release: ix-2p-ep8-1d-ep12-mtp-long-v2
 
 roles:
   prefill:
     lws: {replicas: 2}
     vllm:
       max_num_seqs: 192
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 1
+        draft_sample_method: probabilistic
   decode:
     workload_name: vllm-ep12-decode
     lws: {size: 3}
     parallelism: {tp: 1, dp: 12, ep: true}
     vllm:
-      max_num_seqs: 128
-      max_num_batched_tokens: 512
-      max_cudagraph_capture_size: 128
+      max_num_seqs: 64
+      max_cudagraph_capture_size: 160
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 2
+        draft_sample_method: probabilistic

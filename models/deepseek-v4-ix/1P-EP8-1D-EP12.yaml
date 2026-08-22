@@ -7,7 +7,7 @@ roles:
   prefill:
     lws: {replicas: 1}
     vllm:
-      max_num_seqs: 256
+      max_num_seqs: 128
   decode:
     workload_name: vllm-ep12-decode
     lws: {size: 3}
@@ -15,4 +15,3 @@ roles:
     vllm:
       max_num_seqs: 128
       max_cudagraph_capture_size: 128
-      speculative_config: $delete

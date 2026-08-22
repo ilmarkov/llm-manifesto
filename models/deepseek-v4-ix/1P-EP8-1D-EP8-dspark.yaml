@@ -1,0 +1,101 @@
+# DeepSeek-V4-Pro-DSpark variant of 1P-EP8-1D-EP8: disagg-gb200-1p1d-dep8-dep8-agentic with dspark speculative decoding.
+# 4 nodes / 16 GPUs. dspark with 7 speculative tokens.
+extends: ix-disagg-base.yaml
+release: ix-1p-ep8-1d-ep8-dspark-1308-long-v13
+model:
+  id: deepseek-ai/DeepSeek-V4-Pro-0813
+  label: DeepSeek-V4-Pro-DSpark-IX
+  served_name: deepseek-ai/DeepSeek-V4-Pro-0813
+  image_ref: vllm.pinned_nightly_2026-08-14-fix
+
+roles:
+  prefill:
+    workload_name: vllm-ep8-prefill-dspark
+    lws: {replicas: 1}
+    pre_launch:
+      - |
+        NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
+        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+          test -f "$PATCH_DIR/$f"
+        done
+        cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
+        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+        echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
+      # - |
+      #   KVCONN=/usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1
+      #   PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+      #   test -f "$PATCH_DIR/multi_connector.py"
+      #   cp "$PATCH_DIR/multi_connector.py" "$KVCONN/multi_connector.py"
+      #   echo "MULTICONNECTOR PATCH: installed longest-match connector selection from $PATCH_DIR" >&2
+      # - |
+      #   cat > /tmp/vllm_debug_logging.json <<'EOF'
+      #   {
+      #     "version": 1,
+      #     "disable_existing_loggers": false,
+      #     "formatters": {
+      #       "vllm": {
+      #         "class": "vllm.logging_utils.NewLineFormatter",
+      #         "datefmt": "%m-%d %H:%M:%S",
+      #         "format": "%(levelname)s %(asctime)s [%(fileinfo)s:%(lineno)d] %(message)s"
+      #       }
+      #     },
+      #     "handlers": {
+      #       "vllm": {
+      #         "class": "logging.StreamHandler",
+      #         "formatter": "vllm",
+      #         "level": "DEBUG",
+      #         "stream": "ext://sys.stdout"
+      #       }
+      #     },
+      #     "loggers": {
+      #       "vllm": {"handlers": ["vllm"], "level": "INFO", "propagate": false},
+      #       "vllm.v1.core.sched": {"level": "DEBUG"},
+      #       "vllm.distributed.kv_transfer.kv_connector.v1.mooncake": {"level": "DEBUG"},
+      #       "vllm.distributed.kv_transfer.kv_connector.v1.nixl": {"level": "DEBUG"},
+      #       "vllm.v1.simple_kv_offload": {"level": "DEBUG"}
+      #     }
+      #   }
+      #   EOF
+      #   echo "DEBUG LOGGING: wrote targeted logging config to /tmp/vllm_debug_logging.json" >&2
+    # env:
+    #   VLLM_LOGGING_CONFIG_PATH: "/tmp/vllm_debug_logging.json"
+    vllm:
+      max_num_seqs: 16
+      speculative_config:
+        method: dspark
+        num_speculative_tokens: 1
+        draft_sample_method: probabilistic
+        attention_backend: FLASHINFER_MLA_SPARSE_DSV4
+        enable_adaptive_verification: true
+
+  decode:
+    workload_name: vllm-ep8-decode-dspark
+    lws: {size: 2}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    pre_launch:
+      - |
+        NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
+        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+          test -f "$PATCH_DIR/$f"
+        done
+        cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
+        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+        echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
+    vllm:
+      max_num_seqs: 32
+      max_num_batched_tokens: 256
+      max_cudagraph_capture_size: 256
+      speculative_config:
+        method: dspark
+        num_speculative_tokens: 5
+        draft_sample_method: probabilistic
+        attention_backend: FLASHINFER_MLA_SPARSE_DSV4
+        enable_adaptive_verification: true

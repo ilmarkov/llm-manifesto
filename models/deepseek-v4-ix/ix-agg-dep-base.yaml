@@ -11,7 +11,12 @@ mooncake:
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
   label: DeepSeek-V4-Pro-IX
-  image_ref: vllm.nightly
+  # image_ref: vllm.nightly
+  # image_ref: vllm.nightly_2026-08-04
+  # image_ref: vllm.nightly_2026-08-05
+  image_ref: vllm.pinned_nightly_2026-08-14-fix
+  # image_ref: vllm.standard
+  # image_ref: vllm.fixed_nighlty
   served_name: deepseek-ai/DeepSeek-V4-Pro
 
 routing: {kind: load_aware, target_role: decode}
@@ -23,14 +28,29 @@ roles:
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 1, dp: 8, ep: true}
     fabric_profile: megamoe
+    dp_load_balancing: external
     kv_transfer_config:
-      kv_connector: MooncakeStoreConnector
+      kv_connector: MultiConnector
       kv_role: kv_both
       kv_connector_extra_config:
-        load_async: true
-        lookup_async: true
-        enable_cross_layers_blocks: false
-        enable_offload: false
+        connectors:
+          - kv_connector: NixlConnector
+            kv_role: kv_both
+            kv_load_failure_policy: fail
+            kv_buffer_device: cuda
+            # kv_connector_extra_config:
+            #   enforce_handshake_compat: false
+          - kv_connector: SimpleCPUOffloadConnector
+            kv_role: kv_both
+            kv_connector_extra_config:
+              cpu_bytes_to_use: 42949672960
+          - kv_connector: MooncakeStoreConnector
+            kv_role: kv_both
+            kv_connector_extra_config:
+              load_async: true
+              lookup_async: true
+              enable_cross_layers_blocks: false
+              enable_offload: false
     env:
       VLLM_USE_V2_MODEL_RUNNER: "1"
       VLLM_USE_RUST_FRONTEND: "1"
@@ -52,6 +72,7 @@ roles:
       MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
       ephemeral_storage: 128Gi
+      memory: 768Gi
     vllm:
       load_format: auto
       trust_remote_code: true
@@ -69,11 +90,9 @@ roles:
       max_num_seqs: 64
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 64
+      # compilation_config: {cudagraph_mode: FULL_AND_PIECEWISE, mode: 0}
       compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
       attention_config:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true
         use_fp4_indexer_cache: true
-      speculative_config:
-        method: mtp
-        num_speculative_tokens: 3

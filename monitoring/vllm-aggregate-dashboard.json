@@ -1,4 +1,41 @@
 {
+  "__elements": {},
+  "__inputs": [
+    {
+      "description": "",
+      "label": "prometheus",
+      "name": "DS_PROMETHEUS",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus",
+      "type": "datasource"
+    }
+  ],
+  "__requires": [
+    {
+      "id": "grafana",
+      "name": "Grafana",
+      "type": "grafana",
+      "version": "11.3.0"
+    },
+    {
+      "id": "text",
+      "name": "Text",
+      "type": "panel",
+      "version": ""
+    },
+    {
+      "id": "timeseries",
+      "name": "Time series",
+      "type": "panel",
+      "version": ""
+    },
+    {
+      "id": "prometheus",
+      "name": "Prometheus",
+      "type": "datasource",
+      "version": "1.0.0"
+    }
+  ],
   "annotations": {
     "list": [
       {
@@ -25,7 +62,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
   "links": [],
   "panels": [
     {
@@ -133,7 +169,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(vllm:generation_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[10s]))",
+          "expr": "sum(rate(vllm:generation_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s]))",
           "instant": false,
           "legendFormat": "Generation Throughput",
           "range": true,
@@ -336,14 +372,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(vllm:prompt_tokens_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[10s]))",
+          "expr": "sum(rate(vllm:prompt_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s]))",
           "instant": false,
           "legendFormat": "Total Prefill Prompt Throughput",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prefill Total Prompt Throughput",
+      "title": "Total Prompt Throughput",
       "type": "timeseries"
     },
     {
@@ -561,7 +597,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 27
       },
       "id": 5,
       "options": {
@@ -589,14 +625,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(vllm:prompt_tokens_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[10s])",
+          "expr": "rate(vllm:prompt_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prefill Prompt Throughput",
+      "title": "Prompt Throughput",
       "type": "timeseries"
     },
     {
@@ -662,7 +698,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 43
+        "y": 35
       },
       "id": 4,
       "options": {
@@ -690,14 +726,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:num_requests_running{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:num_requests_running{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prefill Running Requests",
+      "title": "Running Requests",
       "type": "timeseries"
     },
     {
@@ -763,7 +799,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 51
+        "y": 35
       },
       "id": 9,
       "options": {
@@ -791,14 +827,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:num_requests_waiting{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:num_requests_waiting{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prefill Waiting Requests",
+      "title": "Waiting Requests",
       "type": "timeseries"
     },
     {
@@ -874,7 +910,7 @@
         "h": 8,
         "w": 12,
         "x": 6,
-        "y": 59
+        "y": 43
       },
       "id": 11,
       "options": {
@@ -902,210 +938,15 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:kv_cache_usage_perc{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:kv_cache_usage_perc{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Prefill KV Cache Utilization",
+      "title": "KV Cache Utilization",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$DS_PROMETHEUS"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 67
-      },
-      "id": 805,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "title": "Prefill Corrupted Requests (NaN in Logits)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "increase(vllm:corrupted_requests_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[5m]) or 0 * vllm:num_requests_running{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}",
-          "legendFormat": "{{pod}} rank{{rank}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$DS_PROMETHEUS"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 75
-      },
-      "id": 806,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "title": "Prefill Preemptions & Aborts",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "rate(vllm:num_preemptions_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[$__rate_interval])",
-          "legendFormat": "preemptions {{pod}} rank{{rank}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "rate(vllm:request_success_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\", finished_reason=\"abort\"}[$__rate_interval])",
-          "legendFormat": "aborted {{pod}} rank{{rank}}",
-          "refId": "B"
-        }
-      ]
     },
     {
       "collapsed": false,
@@ -1113,7 +954,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 51
       },
       "id": 300,
       "panels": [],
@@ -1184,7 +1025,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 84
+        "y": 52
       },
       "id": 13,
       "options": {
@@ -1322,7 +1163,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 92
+        "y": 52
       },
       "id": 7,
       "options": {
@@ -1350,14 +1191,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "rate(vllm:generation_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[10s])",
+          "expr": "rate(vllm:generation_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode Throughput",
+      "title": "Generation Throughput",
       "type": "timeseries"
     },
     {
@@ -1423,7 +1264,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 100
+        "y": 60
       },
       "id": 6,
       "options": {
@@ -1451,14 +1292,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:num_requests_running{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:num_requests_running{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode Running Requests",
+      "title": "Running Requests (Gen)",
       "type": "timeseries"
     },
     {
@@ -1524,7 +1365,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 108
+        "y": 60
       },
       "id": 10,
       "options": {
@@ -1552,14 +1393,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:num_requests_waiting{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:num_requests_waiting{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode Waiting Requests",
+      "title": "Waiting Requests (Gen)",
       "type": "timeseries"
     },
     {
@@ -1635,7 +1476,7 @@
         "h": 8,
         "w": 12,
         "x": 6,
-        "y": 116
+        "y": 68
       },
       "id": 12,
       "options": {
@@ -1663,14 +1504,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "vllm:kv_cache_usage_perc{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}",
+          "expr": "vllm:kv_cache_usage_perc{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}",
           "instant": false,
           "legendFormat": "{{pod}}-r{{rank}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode KV Cache Utilization",
+      "title": "KV Cache Utilization (Gen)",
       "type": "timeseries"
     },
     {
@@ -1736,7 +1577,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 124
+        "y": 76
       },
       "id": 301,
       "options": {
@@ -1763,14 +1604,14 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (runtime_mode) (rate(vllm:cudagraph_iterations_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m]))",
+          "expr": "sum by (runtime_mode) (rate(vllm:cudagraph_iterations_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]))",
           "instant": false,
           "legendFormat": "{{runtime_mode}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode CUDA Graph Mode (iterations/s)",
+      "title": "CUDA Graph Mode (iterations/s)",
       "type": "timeseries"
     },
     {
@@ -1837,7 +1678,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 132
+        "y": 76
       },
       "id": 302,
       "options": {
@@ -1864,210 +1705,15 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by(job)(rate(vllm:prompt_tokens_by_source_total{job=\"vllm-decode\", source=\"local_compute\", pod=~\"${deployment}-.*\"}[5m]))\n/\nsum by(job)(rate(vllm:request_success_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[5m]))",
+          "expr": "sum by(job)(rate(vllm:prompt_tokens_by_source_total{job=\"vllm-aggregate\", source=\"local_compute\", pod=~\"${deployment}-.*\"}[5m]))\n/\nsum by(job)(rate(vllm:request_success_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[5m]))",
           "instant": false,
           "legendFormat": "prompt tokens/req (local compute)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Decode Local Prompt Tokens / Request",
+      "title": "Local Prompt Tokens / Request",
       "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$DS_PROMETHEUS"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 140
-      },
-      "id": 807,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "title": "Decode Corrupted Requests (NaN in Logits)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "increase(vllm:corrupted_requests_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[5m]) or 0 * vllm:num_requests_running{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}",
-          "legendFormat": "{{pod}} rank{{rank}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "$DS_PROMETHEUS"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 148
-      },
-      "id": 808,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "title": "Decode Preemptions & Aborts",
-      "type": "timeseries",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "rate(vllm:num_preemptions_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[$__rate_interval])",
-          "legendFormat": "preemptions {{pod}} rank{{rank}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "$DS_PROMETHEUS"
-          },
-          "expr": "rate(vllm:request_success_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\", finished_reason=\"abort\"}[$__rate_interval])",
-          "legendFormat": "aborted {{pod}} rank{{rank}}",
-          "refId": "B"
-        }
-      ]
     },
     {
       "collapsed": true,
@@ -2075,7 +1721,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 156
+        "y": 84
       },
       "id": 350,
       "panels": [
@@ -2153,7 +1799,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.10, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.10, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p10",
               "range": true,
@@ -2165,7 +1811,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.50, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p50",
               "range": true,
@@ -2177,14 +1823,14 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.99, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p99",
               "range": true,
               "refId": "C"
             }
           ],
-          "title": "Decode Iteration Tokens (p10/p50/p99)",
+          "title": "Iteration Tokens (p10/p50/p99)",
           "type": "timeseries"
         },
         {
@@ -2261,7 +1907,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.10, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.10, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p10",
               "range": true,
@@ -2273,7 +1919,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.50, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p50",
               "range": true,
@@ -2285,14 +1931,14 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "histogram_quantile(0.99, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(vllm:iteration_tokens_total_bucket{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[10s])) by (le))",
               "instant": false,
               "legendFormat": "p99",
               "range": true,
               "refId": "C"
             }
           ],
-          "title": "Prefill Iteration Tokens (p10/p50/p99)",
+          "title": "Iteration Tokens (Prefill) (p10/p50/p99)",
           "type": "timeseries"
         },
         {
@@ -2845,7 +2491,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 157
+        "y": 101
       },
       "id": 400,
       "panels": [
@@ -3410,7 +3056,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 158
+        "y": 77
       },
       "id": 605,
       "panels": [],
@@ -3481,7 +3127,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 159
+        "y": 78
       },
       "id": 501,
       "options": {
@@ -3611,7 +3257,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 167
+        "y": 78
       },
       "id": 502,
       "options": {
@@ -3721,7 +3367,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 175
+        "y": 78
       },
       "id": 503,
       "options": {
@@ -3833,7 +3479,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 183
+        "y": 86
       },
       "id": 504,
       "options": {
@@ -3958,7 +3604,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 191
+        "y": 86
       },
       "id": 505,
       "options": {
@@ -4082,7 +3728,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 199
+        "y": 94
       },
       "id": 506,
       "options": {
@@ -4136,7 +3782,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 207
+        "y": 102
       },
       "id": 600,
       "panels": [],
@@ -4207,7 +3853,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 208
+        "y": 103
       },
       "id": 601,
       "options": {
@@ -4345,7 +3991,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 216
+        "y": 103
       },
       "id": 602,
       "options": {
@@ -4500,7 +4146,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 224
+        "y": 111
       },
       "id": 603,
       "options": {
@@ -4660,7 +4306,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 232
+        "y": 111
       },
       "id": 604,
       "options": {
@@ -4723,594 +4369,12 @@
       "type": "timeseries"
     },
     {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 240
-      },
-      "id": 1100,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Total time a KV cache block survives in local GPU HBM from allocation to eviction. Requires kv_cache_metrics: true on the deployment.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 373
-          },
-          "id": 1101,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.3.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.1, sum(rate(vllm:kv_block_lifetime_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p10",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, sum(rate(vllm:kv_block_lifetime_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p50",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.9, sum(rate(vllm:kv_block_lifetime_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p90",
-              "range": true,
-              "refId": "C"
-            }
-          ],
-          "title": "KV Block Lifetime (GPU HBM residency before eviction)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Time a block sat unused (not touched by any request) before it was evicted from local GPU HBM. High idle time suggests eviction pressure outpacing reuse.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 373
-          },
-          "id": 1102,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.3.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.1, sum(rate(vllm:kv_block_idle_before_evict_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p10",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, sum(rate(vllm:kv_block_idle_before_evict_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p50",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.9, sum(rate(vllm:kv_block_idle_before_evict_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p90",
-              "range": true,
-              "refId": "C"
-            }
-          ],
-          "title": "KV Block Idle Before Evict",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Time between successive accesses (prefix cache hits) of the same block while still resident in GPU HBM.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 381
-          },
-          "id": 1103,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.3.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.1, sum(rate(vllm:kv_block_reuse_gap_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p10",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, sum(rate(vllm:kv_block_reuse_gap_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p50",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.9, sum(rate(vllm:kv_block_reuse_gap_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le))",
-              "instant": false,
-              "legendFormat": "p90",
-              "range": true,
-              "refId": "C"
-            }
-          ],
-          "title": "KV Block Reuse Gap",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Per-call latency of Mooncake store operations (vllm:mooncake_store_operation_time_seconds), broken out by operation. NOTE: as of the currently pinned vLLM build, this metric is not emitted (confirmed empty in Prometheus) -- this panel is a forward-looking placeholder for when the instrumentation lands upstream or is backported.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "min": 0,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  }
-                ]
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 381
-          },
-          "id": 1104,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.3.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.1, sum(rate(vllm:mooncake_store_operation_time_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le, operation))",
-              "instant": false,
-              "legendFormat": "p10 {{operation}}",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, sum(rate(vllm:mooncake_store_operation_time_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le, operation))",
-              "instant": false,
-              "legendFormat": "p50 {{operation}}",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.9, sum(rate(vllm:mooncake_store_operation_time_seconds_bucket{pod=~\"${deployment}-.*\"}[30s])) by (le, operation))",
-              "instant": false,
-              "legendFormat": "p90 {{operation}}",
-              "range": true,
-              "refId": "C"
-            }
-          ],
-          "title": "Mooncake Store Operation Latency (load/put)",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "SimpleCPUOffloadConnector and MooncakeStoreConnector do not currently expose per-connector Prometheus metrics (confirmed: no 'offload'/'cpu_offload'/'mooncake' series besides the kv_block_* ones above). This is the best available proxy: external (non-GPU-local) prefix cache hit rate per prefill pod, which reflects the combined effect of both connectors. Uneven hit rates across pods can indicate one connector's private buffer (CPU offload) is thrashing while Mooncake's shared pool is not being reached, or vice versa.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "spanNulls": true
-              },
-              "max": 1,
-              "min": 0,
-              "unit": "percentunit"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 389
-          },
-          "id": 1105,
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "12.3.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "rate(vllm:external_prefix_cache_hits_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:external_prefix_cache_queries_total{job=\"vllm-prefill\", pod=~\"${deployment}-.*\"}[1m])",
-              "legendFormat": "{{pod}} engine={{engine}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "External Prefix Cache Hit Rate by Prefill Pod (Mooncake + CPU Offload combined)",
-          "type": "timeseries"
-        }
-      ],
-      "title": "KV Cache Lifecycle (Eviction / Mooncake)",
-      "type": "row"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 241
+        "y": 119
       },
       "id": 700,
       "panels": [],
@@ -5353,7 +4417,7 @@
         "h": 4,
         "w": 4,
         "x": 0,
-        "y": 242
+        "y": 120
       },
       "id": 701,
       "options": {
@@ -5371,8 +4435,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Ready Pods",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5384,7 +4446,9 @@
           "legendFormat": "{{name}}",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Ready Pods",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5397,9 +4461,8 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
-          "unit": "percentunit",
           "decimals": 1,
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -5416,7 +4479,8 @@
                 "value": 0.9
               }
             ]
-          }
+          },
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -5424,7 +4488,7 @@
         "h": 4,
         "w": 4,
         "x": 4,
-        "y": 246
+        "y": 120
       },
       "id": 702,
       "options": {
@@ -5442,8 +4506,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Scheduler Success Rate",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5455,7 +4517,9 @@
           "legendFormat": "Success Rate",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Scheduler Success Rate",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5493,7 +4557,7 @@
         "h": 4,
         "w": 4,
         "x": 8,
-        "y": 250
+        "y": 120
       },
       "id": 703,
       "options": {
@@ -5511,8 +4575,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "EPP Running Requests",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5524,7 +4586,9 @@
           "legendFormat": "Running",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "EPP Running Requests",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5537,11 +4601,10 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
-          "unit": "percentunit",
           "decimals": 1,
-          "min": 0,
+          "mappings": [],
           "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -5558,7 +4621,8 @@
                 "value": 0.9
               }
             ]
-          }
+          },
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -5566,7 +4630,7 @@
         "h": 4,
         "w": 4,
         "x": 12,
-        "y": 254
+        "y": 120
       },
       "id": 704,
       "options": {
@@ -5584,8 +4648,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Avg KV Cache Util (EPP)",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5597,7 +4659,9 @@
           "legendFormat": "KV Cache",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Avg KV Cache Util (EPP)",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5635,7 +4699,7 @@
         "h": 4,
         "w": 4,
         "x": 16,
-        "y": 258
+        "y": 120
       },
       "id": 705,
       "options": {
@@ -5653,8 +4717,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Avg Queue Size (EPP)",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5666,7 +4728,9 @@
           "legendFormat": "Avg Queue",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Avg Queue Size (EPP)",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5679,9 +4743,8 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
-          "unit": "reqps",
           "decimals": 1,
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -5690,7 +4753,8 @@
                 "value": 0
               }
             ]
-          }
+          },
+          "unit": "reqps"
         },
         "overrides": []
       },
@@ -5698,7 +4762,7 @@
         "h": 4,
         "w": 4,
         "x": 20,
-        "y": 262
+        "y": 120
       },
       "id": 706,
       "options": {
@@ -5716,8 +4780,6 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "P/D Decision Rate",
-      "type": "stat",
       "targets": [
         {
           "datasource": {
@@ -5729,7 +4791,9 @@
           "legendFormat": "P/D decisions/s",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "P/D Decision Rate",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -5793,7 +4857,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 266
+        "y": 124
       },
       "id": 707,
       "options": {
@@ -5813,8 +4877,6 @@
           "sort": "desc"
         }
       },
-      "title": "Per-Endpoint Queue Size (EPP)",
-      "type": "timeseries",
       "targets": [
         {
           "datasource": {
@@ -5827,7 +4889,9 @@
           "range": true,
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Per-Endpoint Queue Size (EPP)",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -5923,7 +4987,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 274
+        "y": 124
       },
       "id": 708,
       "options": {
@@ -5940,8 +5004,6 @@
           "sort": "desc"
         }
       },
-      "title": "Scheduler Attempts Rate",
-      "type": "timeseries",
       "targets": [
         {
           "datasource": {
@@ -5965,7 +5027,9 @@
           "range": true,
           "refId": "B"
         }
-      ]
+      ],
+      "title": "Scheduler Attempts Rate",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -6030,7 +5094,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 282
+        "y": 132
       },
       "id": 709,
       "options": {
@@ -6047,8 +5111,6 @@
           "sort": "desc"
         }
       },
-      "title": "Scheduler E2E Latency",
-      "type": "timeseries",
       "targets": [
         {
           "datasource": {
@@ -6072,7 +5134,9 @@
           "range": true,
           "refId": "B"
         }
-      ]
+      ],
+      "title": "Scheduler E2E Latency",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -6137,7 +5201,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 290
+        "y": 132
       },
       "id": 710,
       "options": {
@@ -6156,8 +5220,6 @@
           "sort": "desc"
         }
       },
-      "title": "Plugin Latency (p99)",
-      "type": "timeseries",
       "targets": [
         {
           "datasource": {
@@ -6170,7 +5232,9 @@
           "range": true,
           "refId": "A"
         }
-      ]
+      ],
+      "title": "Plugin Latency (p99)",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -6235,7 +5299,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 298
+        "y": 132
       },
       "id": 711,
       "options": {
@@ -6252,8 +5316,6 @@
           "sort": "desc"
         }
       },
-      "title": "EPP Request Errors",
-      "type": "timeseries",
       "targets": [
         {
           "datasource": {
@@ -6266,7 +5328,9 @@
           "range": true,
           "refId": "A"
         }
-      ]
+      ],
+      "title": "EPP Request Errors",
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -6274,7 +5338,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 306
+        "y": 140
       },
       "id": 800,
       "panels": [],
@@ -6345,7 +5409,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 307
+        "y": 141
       },
       "id": 801,
       "options": {
@@ -6459,7 +5523,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 315
+        "y": 141
       },
       "id": 802,
       "options": {
@@ -6573,7 +5637,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 323
+        "y": 149
       },
       "id": 803,
       "options": {
@@ -6675,7 +5739,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 331
+        "y": 149
       },
       "id": 804,
       "options": {
@@ -6714,571 +5778,253 @@
       "type": "timeseries"
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 339
-      },
       "id": 900,
-      "panels": [],
+      "type": "row",
       "title": "Prefix Cache",
-      "type": "row"
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 157 },
+      "panels": []
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 340
-      },
       "id": 901,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:prefix_cache_hits_total{pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:prefix_cache_queries_total{pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "{{pod}} engine={{engine}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
+      "type": "timeseries",
       "title": "Local Prefix Cache Hit Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 158 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "max": 1,
+          "unit": "percentunit",
           "min": 0,
-          "unit": "percentunit"
+          "max": 1,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 340
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
       },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:prefix_cache_hits_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:prefix_cache_queries_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "{{pod}} engine={{engine}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "id": 902,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:external_prefix_cache_hits_total{pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:external_prefix_cache_queries_total{pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "{{pod}} engine={{engine}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
+      "type": "timeseries",
       "title": "External Prefix Cache Hit Rate (KV Transfer)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 158 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 348
-      },
-      "id": 903,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:prompt_tokens_cached_total{pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "{{pod}} engine={{engine}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Cached Prompt Tokens Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 348
-      },
-      "id": 904,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:prefix_cache_queries_total{pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "queries {{pod}} e{{engine}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:prefix_cache_hits_total{pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "hits {{pod}} e{{engine}}",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Prefix Cache Queries vs Hits Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
+          "unit": "percentunit",
+          "min": 0,
           "max": 1,
-          "min": 0,
-          "unit": "percentunit"
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 356
-      },
-      "id": 1010,
-      "panels": [],
-      "title": "Speculative Decoding",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Fraction of drafted tokens accepted by the target model: accepted_tokens / draft_tokens. With K spec tokens, 40% means on average 0.4\u00d7K tokens accepted per round. Use Acceptance Length for a more actionable view.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 357
-      },
-      "id": 1000,
       "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:spec_decode_num_draft_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m])",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:external_prefix_cache_hits_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:external_prefix_cache_queries_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
           "legendFormat": "{{pod}} engine={{engine}}",
-          "range": true,
           "refId": "A"
         }
-      ],
-      "title": "Draft Token Acceptance Rate",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Absolute rate (tokens/sec) of draft tokens generated vs tokens accepted. The gap between the two lines is wasted speculation work.",
+      "id": 903,
+      "type": "timeseries",
+      "title": "Cached Prompt Tokens Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 166 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never",
-            "spanNulls": true
-          },
-          "unit": "short"
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 357
-      },
-      "id": 1001,
       "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:spec_decode_num_draft_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "draft {{pod}} e{{engine}}",
-          "range": true,
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:prompt_tokens_cached_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "{{pod}} engine={{engine}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 904,
+      "type": "timeseries",
+      "title": "Prefix Cache Queries vs Hits Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 166 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:prefix_cache_queries_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "queries {{pod}} e{{engine}}",
           "refId": "A"
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "accepted {{pod}} e{{engine}}",
-          "range": true,
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:prefix_cache_hits_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "hits {{pod}} e{{engine}}",
           "refId": "B"
         }
-      ],
-      "title": "Draft vs Accepted Tokens Rate",
-      "type": "timeseries"
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Mean tokens produced per speculative decode round: accepted_per_round + 1 (bonus token). Ranges from 1 (no drafts accepted) to num_spec_tokens+1 (all accepted). Values close to 1 mean spec decode is adding overhead without benefit.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": true,
-            "axisLabel": "tokens / round"
-          },
-          "unit": "short",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 365
-      },
-      "id": 1002,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:spec_decode_num_drafts_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m]) + 1",
-          "legendFormat": "AL {{pod}} e{{engine}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Acceptance Length",
-      "type": "timeseries"
+      "id": 1010,
+      "type": "row",
+      "title": "Speculative Decoding",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 174 },
+      "panels": []
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Acceptance rate at each draft position (0 = first speculated token, 1 = second, etc.). Shows the decay curve: position 0 is typically highest; later positions contribute diminishing returns. Useful for deciding the optimal num_speculative_tokens.",
+      "id": 1000,
+      "type": "timeseries",
+      "title": "Draft Token Acceptance Rate",
+      "description": "Fraction of drafted tokens accepted by the target model: accepted_tokens / draft_tokens. With K spec tokens, 40% means on average 0.4×K tokens accepted per round. Use Acceptance Length for a more actionable view.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 175 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 5,
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": true
-          },
           "unit": "percentunit",
           "min": 0,
-          "max": 1
+          "max": 1,
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 365
-      },
-      "id": 1003,
       "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "rate(vllm:spec_decode_num_accepted_tokens_per_pos_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m]) / ignoring(position) group_left rate(vllm:spec_decode_num_drafts_total{job=\"vllm-decode\", pod=~\"${deployment}-.*\"}[1m])",
-          "legendFormat": "pos{{position}} {{pod}} e{{engine}}",
-          "range": true,
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:spec_decode_num_draft_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "{{pod}} engine={{engine}}",
           "refId": "A"
         }
-      ],
+      ]
+    },
+    {
+      "id": 1001,
+      "type": "timeseries",
+      "title": "Draft vs Accepted Tokens Rate",
+      "description": "Absolute rate (tokens/sec) of draft tokens generated vs tokens accepted. The gap between the two lines is wasted speculation work.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 175 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 1, "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:spec_decode_num_draft_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "draft {{pod}} e{{engine}}",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "accepted {{pod}} e{{engine}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 1002,
+      "type": "timeseries",
+      "title": "Acceptance Length",
+      "description": "Mean tokens produced per speculative decode round: accepted_per_round + 1 (bonus token). Ranges from 1 (no drafts accepted) to num_spec_tokens+1 (all accepted). Values close to 1 mean spec decode is adding overhead without benefit.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 183 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "spanNulls": true, "axisLabel": "tokens / round" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:spec_decode_num_accepted_tokens_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) / rate(vllm:spec_decode_num_drafts_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) + 1",
+          "legendFormat": "AL {{pod}} e{{engine}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 1003,
+      "type": "timeseries",
       "title": "Per-Position Acceptance Rate",
-      "type": "timeseries"
+      "description": "Acceptance rate at each draft position (0 = first speculated token, 1 = second, etc.). Shows the decay curve: position 0 is typically highest; later positions contribute diminishing returns. Useful for deciding the optimal num_speculative_tokens.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 183 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "rate(vllm:spec_decode_num_accepted_tokens_per_pos_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m]) / ignoring(position) group_left rate(vllm:spec_decode_num_drafts_total{job=\"vllm-aggregate\", pod=~\"${deployment}-.*\"}[1m])",
+          "legendFormat": "pos{{position}} {{pod}} e{{engine}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "preload": false,
@@ -7308,18 +6054,18 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(vllm:num_requests_running, pod)",
+        "definition": "label_values(vllm:num_requests_running{job=\"vllm-aggregate\"}, pod)",
         "includeAll": true,
         "label": "Deployment",
         "name": "deployment",
         "options": [],
         "query": {
           "qryType": 1,
-          "query": "label_values(vllm:num_requests_running, pod)",
+          "query": "label_values(vllm:num_requests_running{job=\"vllm-aggregate\"}, pod)",
           "refId": "PrometheusVariableQueryEditor-VariableQuery"
         },
         "refresh": 2,
-        "regex": "/^(.*?)-(prefill|decode)-.*$/",
+        "regex": "/^(.*)-\\d+$/",
         "sort": 1,
         "type": "query"
       }
@@ -7331,44 +6077,6 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "WideEP Overview",
-  "uid": "wideep-overview",
-  "version": 7,
-  "__inputs": [
-    {
-      "name": "DS_PROMETHEUS",
-      "label": "prometheus",
-      "description": "",
-      "type": "datasource",
-      "pluginId": "prometheus",
-      "pluginName": "Prometheus"
-    }
-  ],
-  "__elements": {},
-  "__requires": [
-    {
-      "type": "grafana",
-      "id": "grafana",
-      "name": "Grafana",
-      "version": "11.3.0"
-    },
-    {
-      "type": "panel",
-      "id": "text",
-      "name": "Text",
-      "version": ""
-    },
-    {
-      "type": "panel",
-      "id": "timeseries",
-      "name": "Time series",
-      "version": ""
-    },
-    {
-      "type": "datasource",
-      "id": "prometheus",
-      "name": "Prometheus",
-      "version": "1.0.0"
-    }
-  ]
+  "title": "Aggregate Overview",
+  "uid": "aggregate-overview"
 }

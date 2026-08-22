@@ -1,18 +1,46 @@
-# MTP variant of 1P-EP8-1D-EP8: disagg-gb200-1p1d-dep8-dep8-agentic
-# 4 nodes / 16 GPUs. MTP with 3 speculative tokens.
+# MTP variant of 1P-EP8-1D-EP8: disagg-gb200-1p1d-dep8-dep8-agentic with native MTP speculative decoding.
+# 4 nodes / 16 GPUs. MTP with 3 speculative tokens, decode role only.
+# max_cudagraph_capture_size bumped 64 -> 128 to cover K+1=4 query-tokens/seq
+# up to ~32 concurrent seqs/rank (target sweep up to c=160 system-wide).
 extends: ix-disagg-base.yaml
-release: ix-1p-ep8-1d-ep8-mtp
+release: ix-1p-ep8-1d-ep8-mtp-test3
 
 roles:
   prefill:
     lws: {replicas: 1}
     vllm:
-      max_num_seqs: 128
+      max_num_seqs: 64
+      # speculative_config:
+      #   method: mtp
+      #   num_speculative_tokens: 1
+      #   draft_sample_method: probabilistic
+      # enable_eplb: true
+      # eplb_config:
+      #   window_size: "100"
+      #   step_interval: "3000"
+      #   num_redundant_experts: "32"
+      #   log_balancedness: "True"
+      #   use_async: "True"
+      #   communicator: nixl
+      #   log_balancedness_interval: "500"
   decode:
-    workload_name: vllm-ep8-decode
+    workload_name: vllm-ep8-decode-mtp
     lws: {size: 2}
     parallelism: {tp: 1, dp: 8, ep: true}
     vllm:
       max_num_seqs: 64
-      max_num_batched_tokens: 256
-      max_cudagraph_capture_size: 64
+      max_cudagraph_capture_size: 128
+      # speculative_config:
+      #   method: mtp
+      #   num_speculative_tokens: 2
+      #   draft_sample_method: probabilistic
+      # enable_eplb: true
+      # eplb_config:
+      #   window_size: "100"
+      #   step_interval: "1000"
+      #   num_redundant_experts: "32"
+      #   log_balancedness: "True"
+      #   use_async: "True"
+      #   communicator: nixl
+      #   log_balancedness_interval: "100"
+

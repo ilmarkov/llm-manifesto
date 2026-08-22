@@ -12,4 +12,3 @@ roles:
     vllm:
       max_num_seqs: 160
       max_cudagraph_capture_size: 160
-      speculative_config: $delete

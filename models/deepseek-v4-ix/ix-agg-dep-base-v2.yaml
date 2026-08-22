@@ -77,6 +77,3 @@ roles:
         backend: FLASHINFER_MLA_SPARSE_DSV4
         use_prefill_query_quantization: true
         use_fp4_indexer_cache: true
-      speculative_config:
-        method: mtp
-        num_speculative_tokens: 3
