@@ -4,15 +4,21 @@ topology: pd
 
 mooncake:
   enabled: true
-  # 80GB->120GB 2026-08-21: master admin metrics showed the pool sitting at
-  # 88.4% of its 640GB aggregate (8 ranks x 80GB) and climbing toward the
-  # eviction_high_watermark_ratio=0.9 trigger, having already evicted 2.06TB
-  # (3.2x its own capacity) since deployment start. +40GB/rank -> 960GB
-  # aggregate. Paired with prefill resources.memory 768Gi->920Gi below and
-  # cpu_bytes_to_use 40GB->38GB/rank in the prefill role's
-  # SimpleCPUOffloadConnector config, to keep combined tier footprint
-  # (158GiB/rank) within the new node headroom (~37GiB/pod left on a
-  # 956.8GiB GB200 node at the new 920Gi container limit).
+  # 38GB->70GB 2026-08-22: reverting the CPU-offload-favoring split. Empirically,
+  # 120GB-CPU-offload/38GB-mooncake crashed the node (chronic kernel OOM) even
+  # after trimming the pod memory limit, while 120GB-mooncake/38GB-CPU-offload
+  # (the original split) ran for hours without issue -- same nominal combined
+  # total either way. Root cause: SimpleCPUOffloadConnector's buffer is
+  # torch.zeros(...) (eagerly faults in every page at startup, no lazy
+  # commitment) then cudaHostRegister-pinned (vllm/v1/simple_kv_offload/
+  # worker.py) -- pinned pages are permanently excluded from all kernel
+  # reclaim paths. Mooncake's global segment explicitly logs "Store segment
+  # pinned memory is disabled" -- it's NUMA-bound anonymous memory the kernel
+  # can still reclaim/compact under pressure. So a GB in CPU-offload is a much
+  # "harder" claim on physical RAM than a GB in Mooncake. This tunes the split
+  # to 80GB CPU-offload / 70GB mooncake (150GiB/rank total, slightly below the
+  # old 158GiB/rank) to shrink the permanently-pinned portion (was 120GB/rank)
+  # while still giving the router-visible CPU-offload tier a meaningful size.
   global_segment_size: "120GB"
   local_buffer_size: "4GB"
 
@@ -23,7 +29,7 @@ model:
   # image_ref: vllm.standard
   # image_ref: vllm.pinned_nightly_2026-08-07
   # image_ref: vllm.pinned_nightly_2026-08-14
-  image_ref: vllm.pinned_nightly_2026-08-14-fix
+  image_ref: vllm.pinned_nightly_2026-08-14-fix-v1
   # image_ref: vllm.fixed_nightly
   # image_ref: vllm.nightly_2026-08-12
   served_name: deepseek-ai/DeepSeek-V4-Pro
@@ -98,6 +104,11 @@ roles:
     parallelism: {tp: 1, dp: 8, ep: true}
     fabric_profile: megamoe
     dp_load_balancing: external
+    # Enables vLLM's native KV-block store/remove event stream over ZMQ,
+    # consumed by the EPP's precise-prefix-cache-producer instead of the
+    # capacity-guessing approx producer. Decode has no prefix-cache-affinity-
+    # filter/prefix-cache-scorer in its profile, so it doesn't need this.
+    kv_events_config: {port: 5557}
     kv_transfer_config:
       kv_connector: MultiConnector
       kv_role: kv_both
@@ -112,15 +123,15 @@ roles:
           - kv_connector: SimpleCPUOffloadConnector
             kv_role: kv_both
             kv_connector_extra_config:
-              # 40GB->38GB/rank 2026-08-21, paired with mooncake 80GB->120GB/rank
-              # above: kept combined tier footprint at 158GiB/rank (same total as
-              # originally planned 108+50 split) while shifting more of the
-              # increase to mooncake, since it's the tier with confirmed eviction
-              # pressure (master admin metrics: 88.4% full, 2.06TB already
-              # evicted); CPU-offload has no eviction telemetry of its own to
-              # confirm the same pressure. See resources.memory below and
-              # mooncake.global_segment_size above for the full accounting.
-              cpu_bytes_to_use: 40802189312
+              # 120GB->80GB 2026-08-22: see mooncake.global_segment_size above
+              # for the full rationale -- CPU-offload's buffer is eagerly
+              # committed + cudaHostRegister-pinned (permanently unreclaimable
+              # RAM), unlike Mooncake's explicitly-unpinned segment, so it was
+              # the wrong tier to favor with the larger share. 80GB/rank here,
+              # paired with mooncake 70GB/rank, for a 150GiB/rank combined
+              # total (down from 158GiB/rank) and a smaller pinned-memory
+              # footprint (320GB/pod pinned vs. 480GB/pod before).
+              cpu_bytes_to_use: 42949672960
           - kv_connector: MooncakeStoreConnector
             kv_role: kv_both
             kv_connector_extra_config:
@@ -144,7 +155,7 @@ roles:
       # client at process init, not through vLLM's envs.py -- see Mooncake's
       # deployment guide "Engine Runtime Tuning (MC_*)"). Default is
       # min(16, CPU cores); doubled here as a preventative margin now that
-      # global_segment_size is 120GB/rank (2026-08-21) -- live save_put/
+      # global_segment_size is 70GB/rank (2026-08-22) -- live save_put/
       # save_exists latency (p99 4.9ms/48.9ms) showed the single Python send
       # thread at only ~3.8% duty cycle before this change, so this isn't
       # fixing a proven bottleneck, just giving headroom for the higher save
@@ -167,16 +178,21 @@ roles:
       VLLM_USE_DEEP_GEMM: "1"
     resources:
       ephemeral_storage: 128Gi
-      # 768Gi->920Gi 2026-08-21 to make room for the mooncake/cpu-offload tier
-      # increase (see kv_transfer_config above). GB200 node has 956.8GiB
-      # allocatable (4 DP ranks/pod = 1 pod/node); this leaves ~37GiB headroom
-      # for sidecars (dcgm/node-exporter, ~0.56GiB), kubelet/system reserve,
-      # and transient spikes (we've seen torch-allocator pressure during JIT
-      # compilation at high gpu_memory_utilization). Actual steady-state usage
-      # was ~577GiB at the old 480GB/pod tier footprint (768Gi limit), so this
-      # tracks the same limit-vs-actual-usage slack ratio the deployment
-      # already ran safely with, not a new risk profile.
-      memory: 920Gi
+      # 920Gi->880Gi 2026-08-22: at 920Gi we hit recurring node-level kernel
+      # OOM kills (kubectl describe node showed ~95 SystemOOM events in 38
+      # minutes, mostly killing unrelated node daemons like compute-domain-),
+      # which cascaded into LeaderWorkerSet's RecreateGroupOnPodRestart
+      # tearing down the whole prefill group every ~3.5 minutes. Root cause:
+      # the GB200 node's Allocatable (~957.2GiB) is essentially equal to its
+      # Capacity -- kubelet carves out no kube-reserved/system-reserved
+      # headroom -- so 920Gi (96.2% of allocatable) left only ~37GiB for the
+      # OS, container runtime, Cilium, sidecars (dcgm/node-exporter), and the
+      # NVSwitch fabric daemon, which wasn't enough in practice even though
+      # our own container's cgroup usage never approached 920Gi (observed
+      # ~450-490GiB at crash time). 880Gi restores ~77GiB of real headroom;
+      # combined with the tier rebalance below (150GiB/rank, less pinned
+      # memory), this leaves meaningfully more slack than before.
+      memory: 880Gi
     vllm:
       load_format: auto
       trust_remote_code: true
