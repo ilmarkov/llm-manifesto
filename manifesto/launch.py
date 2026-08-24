@@ -94,16 +94,6 @@ def build_launch_script(
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
-    if role.kv_events_config:
-        # vLLM auto-offsets the configured ZMQ publisher port by each local
-        # rank's GLOBAL dp rank. On multi-pod DP groups every pod would
-        # otherwise drift to a different port range, so subtract this pod's
-        # START_RANK to land local ZMQ ports at a fixed
-        # <port>..<port>+DP_SIZE_LOCAL-1 range on every pod (mirrors
-        # llm-d/llm-d's wide-ep-lws precise-prefix-cache-routing guide).
-        kv_events_port = role.kv_events_config.get("port", 5557)
-        lines.append(f"KV_EVENTS_BASE=$(( {kv_events_port} - START_RANK ))")
-
     multi_node_tp = layout.tp_world_size > layout.tp_local_size
     if multi_node_tp:
         lines += [
@@ -155,21 +145,6 @@ def build_launch_script(
         ]
     if role.kv_transfer_config:
         base_args.append(["--kv_transfer_config", shlex.quote(json.dumps(role.kv_transfer_config, separators=(",", ":")))])
-    if role.kv_events_config:
-        # Built as a raw double-quoted shell word (not shlex.quote, which
-        # would single-quote it and block $KV_EVENTS_BASE/$VLLM_NIXL_SIDE_
-        # CHANNEL_HOST expansion) with inner JSON double-quotes escaped.
-        # VLLM_NIXL_SIDE_CHANNEL_HOST is already set to status.podIP whenever
-        # a NixlConnector is configured (see lws.py), which every kv-events-
-        # enabled role here also uses.
-        model_name = spec.model.served_name or spec.model.id
-        kv_events_topic = f"kv@${{VLLM_NIXL_SIDE_CHANNEL_HOST}}:{ports.backend[0]}@{model_name}"
-        kv_events_json = (
-            '{\\"enable_kv_cache_events\\":true,\\"publisher\\":\\"zmq\\",'
-            '\\"endpoint\\":\\"tcp://*:${KV_EVENTS_BASE}\\",'
-            f'\\"topic\\":\\"{kv_events_topic}\\"}}'
-        )
-        base_args.append(["--kv-events-config", f'"{kv_events_json}"'])
     if spec.model.served_name:
         base_args.append(["--served-model-name", shlex.quote(spec.model.served_name)])
     for name, value in (vllm_args or role.vllm_args).items():

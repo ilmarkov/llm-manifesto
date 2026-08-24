@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import yaml
 
-from .common import secret_env
 from ..instance import Instance
 from ..cluster import Cluster
 from ..parallelism import parallel_layout
@@ -12,7 +11,7 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 
 
-def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name: str | None = None) -> str:
+def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
     if routing.kind == RoutingKind.PD:
@@ -22,25 +21,6 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
             "plugins": [
                 {"type": "prefill-filter"},
                 {"type": "decode-filter"},
-                {
-                    # Real tokenizer, required by precise-prefix-cache-producer
-                    # (the estimate backend's byte-packed IDs don't correlate
-                    # with vLLM's own KV-block hashes). Calls a CPU-only
-                    # `vllm launch render` sidecar in this same EPP pod (see
-                    # render_routing) rather than a serving prefill/decode
-                    # pod, so tokenization never competes with GPU work.
-                    "type": "token-producer",
-                    "parameters": {
-                        "modelName": model_name,
-                        "vllm": {"url": "http://localhost:8000"},
-                    },
-                },
-                {
-                    # Feeds precise-prefix-cache-producer's per-pod ZMQ
-                    # subscriber lifecycle (connect on pod add, disconnect on
-                    # pod delete).
-                    "type": "endpoint-notification-source",
-                },
                 # Removed 2026-08-21 (prefill-queue-limiter / utilization-
                 # filter, cap 40): live v12 c192 data showed the queue-
                 # balancing changes above (queue-scorer, higher
@@ -72,104 +52,98 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                     # default producer found for missing data key:
                     # UncachedRequestTokensDataKey/inflight-load-producer,
                     # which is consumed by: token-load-scorer" (confirmed via
-                    # live CrashLoopBackOff on the v9 rollout). No name
-                    # needed: the default (unnamed) instance produces both
-                    # keys under the plugin's type name
+                    # live CrashLoopBackOff on the v9 rollout). No name or
+                    # parameters needed: the default (unnamed) instance
+                    # produces both keys under the plugin's type name
                     # "inflight-load-producer", which is exactly what
                     # token-load-scorer looks up when its own
                     # inFlightLoadProducerName is left unset.
                     "type": "inflight-load-producer",
+                },
+                {
+                    # autoTune disabled: it reads real per-pod capacity from vLLM's
+                    # vllm:cache_config_info metric, but that metric is never emitted
+                    # by our vLLM build (checked live: 54 metric families on
+                    # /metrics, none matching cache_config_info/num_gpu_blocks) --
+                    # autoTune was silently falling back to the plugin's static
+                    # default (31250 blocks * our 256 blockSizeTokens = 8M tokens)
+                    # regardless. Even if the metric worked, autoTune only ever
+                    # reads num_gpu_blocks -- it has no concept of CPU-offloaded
+                    # capacity, so it would still only model the GPU tier.
+                    #
+                    # lruCapacityPerServer derived from live prefill logs
+                    # (ilmarkov-vllm-ep8-prefill-dspark-0, gpu-memory-utilization
+                    # 0.97, --block-size 256):
+                    #   GPU KV cache:  3,089,495 tokens/rank (kv_cache_utils.py log,
+                    #     unchanged since gpu-memory-utilization didn't change)
+                    #   CPU offload:  33,204 blocks x 256 tok/block = 8,500,224
+                    #     tokens/rank (SimpleCPUOffloadConnector, cpu_bytes_to_use=
+                    #     40802189312 = 38 GiB/rank as of the 2026-08-21 mooncake/
+                    #     cpu-offload rebalance -- down from 40 GiB/34,952 blocks;
+                    #     confirmed live via worker.py:208 "33204 CPU blocks (38.00 GB)")
+                    #   combined:     11,589,719 tokens/rank -> /256 ~= 45,272 blocks
+                    # Mooncake (also configured, enable_offload=false) excluded --
+                    # it's an external/read-only tier for this pod, not local
+                    # retention. Decode has no CPU-offload connector at all, but
+                    # the decode profile doesn't consume prefix-cache-affinity-filter
+                    # /prefix-cache-scorer, so this value only matters for prefill.
+                    # Re-derive if gpu-memory-utilization, cpu_bytes_to_use, or
+                    # --block-size change.
+                    "type": "approx-prefix-cache-producer",
                     "parameters": {
-                        # prefixMatchInfoProducerName (2026-08-22): this
-                        # producer's own Consumes() treats PrefixCacheMatchInfo
-                        # as *optional*, defaulting to the approximate-prefix
-                        # producer's key when unset (llm-d-router
-                        # pkg/.../dataproducer/inflightload/producer.go). Now
-                        # that approx-prefix-cache-producer is gone, leaving
-                        # this unset would silently resolve to no data (no
-                        # startup error, since it's optional) and always
-                        # apply a zero cached-prefix discount -- so
-                        # UncachedRequestTokensDataKey, and therefore
-                        # token-load-scorer's tokenLoad, would never benefit
-                        # from the precise producer at all. Matches
-                        # precise-routing.values.yaml in the llm-d wide-ep-lws
-                        # guide. Verified this field and behavior exist as
-                        # described at our pinned router tag v0.10.0, not just
-                        # on a newer commit.
-                        "prefixMatchInfoProducerName": "precise-prefix-cache-producer",
+                        "autoTune": False,
+                        "blockSizeTokens": 256,
+                        "maxPrefixTokensToMatch": 1048576,
+                        "maxPrefixBlocksToMatch": 4096,
+                        "lruCapacityPerServer": 45272,
                     },
                 },
                 {
-                    # Replaces approx-prefix-cache-producer (2026-08-22): that
-                    # producer only ever *estimated* per-pod retention via a
-                    # static lruCapacityPerServer we had to hand-derive and
-                    # re-derive from log snapshots every time gpu-memory-
-                    # utilization/cpu_bytes_to_use changed (last value: 45272
-                    # blocks, see git history). This producer instead
-                    # subscribes to vLLM's real KV-block store/remove event
-                    # stream (--kv-events-config, enabled on the prefill role
-                    # only -- see ix-disagg-base.yaml) and builds an exact
-                    # per-pod-per-tier index, so no capacity guessing is
-                    # needed at all. Requires our EPP image >= v0.10.0
-                    # (llm-d-router#2233: without it, KV-index identity is
-                    # derived from the ZMQ topic string, which collapses all
-                    # local DP ranks of one pod into a single index entry --
-                    # exactly our topology, 4 local ranks/pod). blockSizeTokens
-                    # matches --block-size 256 on the engine (required for the
-                    # EPP's independently-recomputed hashes to align with the
-                    # KV-event block boundaries). kvCacheBackendConfigs gives
-                    # combined GPU+CPU-offload visibility -- confirmed
-                    # SimpleCPUOffloadConnector's block pool emits the same
-                    # KVCacheEvents gated by the same enable_kv_cache_events
-                    # flag (vllm/v1/simple_kv_offload/manager.py), so the CPU
-                    # tier is precisely tracked too, not just guessed at.
-                    # Mooncake stays untracked here deliberately: it's a
-                    # cluster-shared distributed store reachable from any
-                    # rank regardless of routing, so it doesn't need (or
-                    # benefit from) per-pod cache-location precision the way
-                    # the two local-only tiers do.
-                    "type": "precise-prefix-cache-producer",
-                    "parameters": {
-                        "tokenProcessorConfig": {"blockSizeTokens": 256},
-                        "indexerConfig": {
-                            "kvBlockIndexConfig": {"inMemoryConfig": {"podCacheSize": 128}},
-                            "kvCacheBackendConfigs": [
-                                {"name": "gpu", "weight": 1.0},
-                                {"name": "cpu", "weight": 0.4},
-                            ],
-                        },
-                        "kvEventsConfig": {
-                            "topicFilter": "kv@",
-                            "discoverPods": True,
-                            "podDiscoveryConfig": {"socketPort": 5557},
-                        },
-                    },
+                    #
+                    # peakPrefillThroughput re-calibrated with
+                    # llm-d's official recipe (guides/recipes/router/
+                    # calibration/calibrate.sh) run against this exact live
+                    # deployment: sequential 8192-token (= our prefill
+                    # max_num_batched_tokens) random-token-ID requests via the
+                    # real gateway path, guaranteed cache miss, median TTFT
+                    # 1.7124s -> 4783 tok/s. The old 200000 (and v6's 80000)
+                    # were both derived from active_prefill_throughput, an
+                    # *aggregate concurrent-batched* metric -- a fundamentally
+                    # different regime from this plugin's intended semantics
+                    # (single in-flight request draining a backlog). The
+                    # calibrated value is ~15-40x lower than either prior
+                    # guess. Re-run calibrate.sh if max_num_batched_tokens or
+                    # hardware changes.
+                    #
+                    # maxTTFTPenaltyMs re-derived from live gate
+                    # telemetry: ran a 900s c192 benchmark against this exact
+                    # deployment with EPP at -v=4 and captured every
+                    # PrefixCacheAffinityFilter decision via continuous
+                    # `kubectl logs -f` (retroactive `kubectl logs --since`
+                    # doesn't work here -- at -v=4 the pod emits ~270
+                    # lines/sec and container log rotation evicts anything
+                    # older than a few minutes). Across 11,767 prefill
+                    # scheduling decisions: 15.7% had no sticky candidate,
+                    # 24.2% held stickiness, and 60.1% broke it via the TTFT
+                    # load gate at the plugin's default 5000ms -- i.e. cache
+                    # affinity was actually honored only ~1 in 4 times.
+                    # Penalty-when-broken distribution: median 17.4s over
+                    # budget, p75 26.1s, p90 36.0s, p99 202s (max 527s).
+                    # Recomputed breaking rate at higher thresholds: 15000ms
+                    # -> 42.1%, 25000ms -> 19.5%, 30000ms -> 12.6%, 40000ms
+                    # -> 5.0%, 60000ms -> 1.9%. Picked 30000ms to keep the
+                    # gate as a safety valve for genuinely severe (p75+)
+                    # imbalances while letting affinity hold for the routine
+                    # variance that was previously discarding it most of the
+                    # time. When gate held, avg sticky candidates was 1.009
+                    # of 8 -- each conversation really does have one clear
+                    # home rank, so honoring stickiness is high-value here.
+                    # Re-capture live telemetry (same method) if
+                    # peakPrefillThroughput or the affinity/load-scoring mix
+                    # changes materially.
+                    "type": "prefix-cache-affinity-filter",
+                    "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
                 },
-                # Removed 2026-08-22 (prefix-cache-affinity-filter): this
-                # hard elimination gate had a structural flaw exposed by its
-                # own calibration telemetry (see prior comment history, now
-                # superseded) -- at its 0.80 default affinityThreshold, once
-                # a sticky candidate existed it narrowed to *only* that
-                # endpoint (avg 1.009 of 8) with zero regard for its current
-                # queue/load, since narrowing to a single candidate leaves
-                # nothing for token-load-scorer/queue-scorer to score. The
-                # only release valve was the filter's own coarse, binary
-                # TTFT-estimate gate (peakPrefillThroughput/maxTTFTPenaltyMs),
-                # which per that same telemetry didn't trip until a severe
-                # (p75+, ~17s+ over budget) imbalance -- a likely structural
-                # cause of the persistent per-rank waiting-queue skew, since
-                # a cache-affine-but-currently-busy rank got 100% of matching
-                # traffic until things got extreme. prefix-cache-scorer below
-                # reads PrefixCacheMatchInfo directly from
-                # precise-prefix-cache-producer (Consumes() has no coupling
-                # to this filter having run) and gives a continuous
-                # match-ratio reward on every decision, blended via weights
-                # with token-load-scorer/queue-scorer -- graceful, graduated
-                # trade-offs instead of a bimodal fully-sticky-vs-full-
-                # fallback switch. Note the 6:3:3 weight ratio below was
-                # calibrated for the fallback-only regime this filter used to
-                # gate into (~15-30% of decisions); it now governs 100% of
-                # decisions, so re-observe/retune if live behavior warrants.
                 {
                     # Re-added 2026-08-21 after v9 regressed hard vs v7
                     # (c160: TTFT p50 31.4s vs v7's 5.9s, throughput 4530
@@ -200,13 +174,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                     # maxTTFTPenaltyMs/peakPrefillThroughput in this change;
                     # revisit those separately if this alone doesn't recover
                     # v7-level local hit rates.
-                    #
-                    # prefixMatchInfoProducerName added 2026-08-22 to point at
-                    # precise-prefix-cache-producer instead of the removed
-                    # approx producer -- same weight/rationale above still
-                    # applies unchanged.
                     "type": "prefix-cache-scorer",
-                    "parameters": {"prefixMatchInfoProducerName": "precise-prefix-cache-producer"},
                 },
                 {
                     # queueThresholdTokens re-derived from the same live
@@ -277,19 +245,12 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                 {"type": "max-score-picker", "name": "prefill-picker"},
                 {"type": "max-score-picker", "name": "decode-picker"},
             ],
-            "dataLayer": {
-                "sources": [
-                    {
-                        "pluginRef": "endpoint-notification-source",
-                        "extractors": [{"pluginRef": "precise-prefix-cache-producer"}],
-                    }
-                ]
-            },
             "schedulingProfiles": [
                 {
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
+                        {"pluginRef": "prefix-cache-affinity-filter"},
                         {"pluginRef": "prefix-cache-scorer", "weight": 6},
                         {"pluginRef": "token-load-scorer", "weight": 3},
                         {"pluginRef": "queue-scorer", "weight": 3},
@@ -441,13 +402,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": instance.name("epp-config"), "labels": instance.labels("routing")},
-            "data": {
-                "plugins.yaml": _plugin_config(
-                    spec.routing,
-                    dp_enabled=role.parallelism.dp_enabled,
-                    model_name=spec.model.served_name or spec.model.id,
-                )
-            },
+            "data": {"plugins.yaml": _plugin_config(spec.routing, dp_enabled=role.parallelism.dp_enabled)},
         },
         {
             "apiVersion": "inference.networking.k8s.io/v1",
@@ -515,71 +470,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                     "requests": {"cpu": "8", "memory": "16Gi"},
                                     "limits": {"cpu": "8", "memory": "16Gi"},
                                 },
-                            },
-                            *(
-                                [
-                                    {
-                                        # CPU-only tokenizer sidecar for
-                                        # token-producer's vllm backend, so
-                                        # precise-prefix-cache-producer gets
-                                        # real token IDs without adding load
-                                        # to GPU-serving pods. This EPP
-                                        # Deployment is pinned to amd64 nodes
-                                        # (see nodeAffinity above), separate
-                                        # from the arm64 GPU nodepool, so it
-                                        # can't use spec.model.image if that's
-                                        # an arm64-only custom build. Doesn't
-                                        # need our patches though: `--tokenizer
-                                        # -mode` and `vllm launch render` are
-                                        # both plain upstream vLLM features,
-                                        # so any reasonably current public
-                                        # image produces the same token IDs
-                                        # (and thus the same KV-block hashes)
-                                        # as the real engines, as long as our
-                                        # branch hasn't locally patched
-                                        # tokenizer/renderer/parser code for
-                                        # this model (verified true as of
-                                        # 2026-08-22). Must be the dedicated
-                                        # `-cpu` build, not the CUDA-targeted
-                                        # vllm-openai image: vLLM's platform
-                                        # auto-detection only activates
-                                        # CpuPlatform if the installed
-                                        # package's version string is tagged
-                                        # `+cpu` (or on macOS) -- on a plain
-                                        # CUDA build with no GPU present, it
-                                        # resolves to UnspecifiedPlatform and
-                                        # crashes with "Failed to infer
-                                        # device type" instead of falling
-                                        # back to CPU.
-                                        "name": "vllm-render",
-                                        "image": spec.routing.render_image or "vllm/vllm-openai-cpu:latest",
-                                        "imagePullPolicy": "Always",
-                                        "command": ["vllm", "launch", "render"],
-                                        "args": [
-                                            spec.model.id,
-                                            "--port=8000",
-                                            *(["--trust-remote-code"] if role.vllm_args.get("trust_remote_code") else []),
-                                            *(
-                                                [f"--tokenizer-mode={role.vllm_args['tokenizer_mode']}"]
-                                                if role.vllm_args.get("tokenizer_mode")
-                                                else []
-                                            ),
-                                        ],
-                                        "env": [secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN")],
-                                        "ports": [{"containerPort": 8000, "name": "render"}],
-                                        "readinessProbe": {
-                                            "httpGet": {"path": "/health", "port": 8000},
-                                            "periodSeconds": 5,
-                                        },
-                                        "resources": {
-                                            "requests": {"cpu": "4", "memory": "16Gi"},
-                                            "limits": {"cpu": "4", "memory": "16Gi"},
-                                        },
-                                    }
-                                ]
-                                if spec.routing.kind == RoutingKind.PD
-                                else []
-                            ),
+                            }
                         ],
                         "volumes": [{"name": "config", "configMap": {"name": instance.name("epp-config")}}],
                     },

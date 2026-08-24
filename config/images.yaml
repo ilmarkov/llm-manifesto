@@ -23,7 +23,7 @@ vllm:
   # confidence-scheduled verification). First nightly after both landed.
   pinned_nightly_2026-08-14: quay.io/rh-ee-imarkov/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9
   pinned_nightly_2026-08-14-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8a102759ba2786dd2813564f1d77029d1c770f73
-  pinned_nightly_2026-08-14-fix-v1: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8899ec6b3fd07a2b5a839f8d32fc9cc6617f2274
+  pinned_nightly_2026-08-14-fix-v1: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-f6c0c2fe6d0d8a031adc86b3e276a7e466e38e44
   nightly_2026-08-12: vllm/vllm-openai:nightly-3ee2df30337a301164c46ae444b76ee67e71c106
   # fixed_nightly: quay.io/rh-ee-imarkov/vllm-openai:a3cea7c214
 
