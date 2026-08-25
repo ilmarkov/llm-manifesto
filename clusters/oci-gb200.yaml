@@ -24,18 +24,18 @@ pod_defaults:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:
-          - matchExpressions:
-              - key: node-role.kubernetes.io/hpc-rack-2
-                operator: Exists
-              - key: nvidia.com/gpu.product
-                operator: In
-                values: ["NVIDIA-GB200"]
           # - matchExpressions:
-          #     - key: node-role.kubernetes.io/hpc-rack-3
+          #     - key: node-role.kubernetes.io/hpc-rack-2
           #       operator: Exists
           #     - key: nvidia.com/gpu.product
           #       operator: In
           #       values: ["NVIDIA-GB200"]
+          - matchExpressions:
+              - key: node-role.kubernetes.io/hpc-rack-3
+                operator: Exists
+              - key: nvidia.com/gpu.product
+                operator: In
+                values: ["NVIDIA-GB200"]
 
 model_server_resources:
   cpu_per_gpu: "8"

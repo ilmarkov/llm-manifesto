@@ -1,30 +1,29 @@
 # DeepSeek-V4-Pro-DSpark variant of 1P-EP8-1D-EP8: disagg-gb200-1p1d-dep8-dep8-agentic with dspark speculative decoding.
 # 4 nodes / 16 GPUs. dspark with 7 speculative tokens.
 extends: ix-disagg-base.yaml
-release: ix-1p-ep8-1d-ep8-dspark-1308-long-v13
+release: ix-1p-ep8-1d-ep8-dspark-1308-test
 model:
   id: deepseek-ai/DeepSeek-V4-Pro-0813
   label: DeepSeek-V4-Pro-DSpark-IX
   served_name: deepseek-ai/DeepSeek-V4-Pro-0813
-  image_ref: vllm.pinned_nightly_2026-08-14-fix
 
 roles:
   prefill:
     workload_name: vllm-ep8-prefill-dspark
     lws: {replicas: 1}
-    pre_launch:
-      - |
-        NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
-        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
-        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
-        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
-        for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
-          test -f "$PATCH_DIR/$f"
-        done
-        cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
-        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
-        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
-        echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
+    # pre_launch:
+    #   - |
+    #     NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
+    #     DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+    #     FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+    #     PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+    #     for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+    #       test -f "$PATCH_DIR/$f"
+    #     done
+    #     cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
+    #     cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+    #     cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+    #     echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
       # - |
       #   KVCONN=/usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1
       #   PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
@@ -76,19 +75,19 @@ roles:
     workload_name: vllm-ep8-decode-dspark
     lws: {size: 2}
     parallelism: {tp: 1, dp: 8, ep: true}
-    pre_launch:
-      - |
-        NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
-        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
-        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
-        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
-        for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
-          test -f "$PATCH_DIR/$f"
-        done
-        cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
-        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
-        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
-        echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
+    # pre_launch:
+    #   - |
+    #     NVIDIA=/usr/local/lib/python3.12/dist-packages/vllm/models/deepseek_v4/nvidia
+    #     DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+    #     FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+    #     PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+    #     for f in flashinfer_sparse.py flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+    #       test -f "$PATCH_DIR/$f"
+    #     done
+    #     cp "$PATCH_DIR/flashinfer_sparse.py" "$NVIDIA/flashinfer_sparse.py"
+    #     cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+    #     cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+    #     echo "DSPARK PATCH: installed sparse+allreduce fixes from $PATCH_DIR (#50932)" >&2
     vllm:
       max_num_seqs: 32
       max_num_batched_tokens: 256
