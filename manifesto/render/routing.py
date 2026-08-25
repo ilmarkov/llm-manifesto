@@ -12,16 +12,32 @@ from ..resolve import resolve_role
 from ..spec import DeploymentSpec, RoutingKind, RoutingSpec
 
 
-def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name: str | None = None) -> str:
+def _plugin_config(
+    routing: RoutingSpec,
+    *,
+    dp_enabled: bool = False,
+    model_name: str | None = None,
+    namespace: str = "default",
+    prefill_lws_name: str | None = None,
+) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
     if routing.kind == RoutingKind.PD:
+        pod_label_selector = (
+            f"leaderworkerset.sigs.k8s.io/name={prefill_lws_name},llm-d.ai/role=prefill"
+            if prefill_lws_name
+            else "llm-d.ai/role=prefill"
+        )
         config = {
             "apiVersion": "llm-d.ai/v1alpha1",
             "kind": "EndpointPickerConfig",
             "plugins": [
-                {"type": "prefill-filter"},
-                {"type": "decode-filter"},
+                {"type": "disagg-headers-handler"},
+                {"type": "always-disagg-pd-decider"},
+                {
+                    "type": "disagg-profile-handler",
+                    "parameters": {"deciderPluginName": "always-disagg-pd-decider"},
+                },
                 {
                     # Real tokenizer, required by precise-prefix-cache-producer
                     # (the estimate backend's byte-packed IDs don't correlate
@@ -32,7 +48,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                     "type": "token-producer",
                     "parameters": {
                         "modelName": model_name,
-                        "vllm": {"url": "http://localhost:8000"},
+                        "vllm": {"url": "http://localhost:8000", "timeout": "15s"},
                     },
                 },
                 {
@@ -41,259 +57,133 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                     # pod delete).
                     "type": "endpoint-notification-source",
                 },
-                # Removed 2026-08-21 (prefill-queue-limiter / utilization-
-                # filter, cap 40): live v12 c192 data showed the queue-
-                # balancing changes above (queue-scorer, higher
-                # queueThresholdTokens) succeeded in eliminating the old
-                # single-rank pileup -- but pushed *typical* per-rank
-                # waiting-queue depth up to 24-27 avg across all 8 ranks
-                # (vs v10's 7-12 on 7 healthy ranks), so this filter's cap=40
-                # was now being crossed 17-22% of the time on *every* rank
-                # instead of just the one pathological rank it was designed
-                # for. Placed before prefix-cache-affinity-filter (by design,
-                # to exclude overloaded ranks before stickiness locks in), it
-                # was routinely excluding the cache-affine rank itself,
-                # breaking locality broadly: prefill local hit rate collapsed
-                # 77.8% (v10 c192) -> 19.2% (v12 c192), true recompute nearly
-                # doubled (6.9% -> 14.6%), TTFT avg roughly tripled (22.5s ->
-                # 66.4s), throughput dropped 42% (7147 -> 4142 tok/s) -- all
-                # while ITL stayed flat, confirming decode/capacity weren't
-                # the cause. Re-add only with a cap re-derived from the
-                # *current* per-rank operating range (not v10's stale
-                # baseline) if single-rank pileups reappear.
+                {"type": "prefill-filter"},
+                {"type": "decode-filter"},
                 {
-                    # Required explicitly: token-load-scorer consumes both
-                    # InFlightLoadDataKey (auto-injectable -- registered as
-                    # the default producer for that key) and
-                    # UncachedRequestTokensDataKey (NOT auto-injectable --
-                    # no default producer is registered for it anywhere in
-                    # llm-d-router). Without this declaration EPP fails at
-                    # startup: "failed to create missing data producers - no
-                    # default producer found for missing data key:
-                    # UncachedRequestTokensDataKey/inflight-load-producer,
-                    # which is consumed by: token-load-scorer" (confirmed via
-                    # live CrashLoopBackOff on the v9 rollout). No name
-                    # needed: the default (unnamed) instance produces both
-                    # keys under the plugin's type name
-                    # "inflight-load-producer", which is exactly what
-                    # token-load-scorer looks up when its own
-                    # inFlightLoadProducerName is left unset.
-                    "type": "inflight-load-producer",
-                    "parameters": {
-                        # prefixMatchInfoProducerName (2026-08-22): this
-                        # producer's own Consumes() treats PrefixCacheMatchInfo
-                        # as *optional*, defaulting to the approximate-prefix
-                        # producer's key when unset (llm-d-router
-                        # pkg/.../dataproducer/inflightload/producer.go). Now
-                        # that approx-prefix-cache-producer is gone, leaving
-                        # this unset would silently resolve to no data (no
-                        # startup error, since it's optional) and always
-                        # apply a zero cached-prefix discount -- so
-                        # UncachedRequestTokensDataKey, and therefore
-                        # token-load-scorer's tokenLoad, would never benefit
-                        # from the precise producer at all. Matches
-                        # precise-routing.values.yaml in the llm-d wide-ep-lws
-                        # guide. Verified this field and behavior exist as
-                        # described at our pinned router tag v0.10.0, not just
-                        # on a newer commit.
-                        "prefixMatchInfoProducerName": "precise-prefix-cache-producer",
-                    },
-                },
-                {
-                    # Replaces approx-prefix-cache-producer (2026-08-22): that
-                    # producer only ever *estimated* per-pod retention via a
-                    # static lruCapacityPerServer we had to hand-derive and
-                    # re-derive from log snapshots every time gpu-memory-
-                    # utilization/cpu_bytes_to_use changed (last value: 45272
-                    # blocks, see git history). This producer instead
-                    # subscribes to vLLM's real KV-block store/remove event
-                    # stream (--kv-events-config, enabled on the prefill role
-                    # only -- see ix-disagg-base.yaml) and builds an exact
-                    # per-pod-per-tier index, so no capacity guessing is
-                    # needed at all. Requires our EPP image >= v0.10.0
-                    # (llm-d-router#2233: without it, KV-index identity is
-                    # derived from the ZMQ topic string, which collapses all
-                    # local DP ranks of one pod into a single index entry --
-                    # exactly our topology, 4 local ranks/pod). blockSizeTokens
-                    # matches --block-size 256 on the engine (required for the
-                    # EPP's independently-recomputed hashes to align with the
-                    # KV-event block boundaries). kvCacheBackendConfigs gives
-                    # combined GPU+CPU-offload visibility -- confirmed
-                    # SimpleCPUOffloadConnector's block pool emits the same
-                    # KVCacheEvents gated by the same enable_kv_cache_events
-                    # flag (vllm/v1/simple_kv_offload/manager.py), so the CPU
-                    # tier is precisely tracked too, not just guessed at.
-                    # Mooncake stays untracked here deliberately: it's a
-                    # cluster-shared distributed store reachable from any
-                    # rank regardless of routing, so it doesn't need (or
-                    # benefit from) per-pod cache-location precision the way
-                    # the two local-only tiers do.
+                    # Subscribes to vLLM's real KV-block store/remove event
+                    # stream (--kv-events-config on the prefill role) and
+                    # builds an exact per-pod-per-tier index. Named
+                    # "approx-prefix-cache-producer" so downstream plugins
+                    # reference it by that stable name regardless of the
+                    # underlying implementation. blockSizeTokens must match
+                    # --block-size on the engine so EPP-recomputed hashes
+                    # align with KV-event block boundaries.
+                    # kvCacheBackendConfigs tracks both the GPU tier
+                    # (weight 1.0) and the SimpleCPUOffload tier (weight 0.5).
+                    # fullReportRepair requests a full index snapshot from a
+                    # prefill pod when the EPP detects too many missing blocks,
+                    # closing gaps from missed ZMQ events.
                     "type": "precise-prefix-cache-producer",
+                    "name": "approx-prefix-cache-producer",
                     "parameters": {
                         "tokenProcessorConfig": {"blockSizeTokens": 256},
+                        "speculativeIndexing": False,
                         "indexerConfig": {
-                            "kvBlockIndexConfig": {"inMemoryConfig": {"podCacheSize": 128}},
+                            "kvBlockIndexConfig": {
+                                "enableMetrics": True,
+                                "inMemoryConfig": {"size": 10000000, "podCacheSize": 1024},
+                            },
                             "kvCacheBackendConfigs": [
                                 {"name": "gpu", "weight": 1.0},
-                                {"name": "cpu", "weight": 0.4},
+                                {"name": "cpu", "weight": 0.5},
                             ],
                         },
                         "kvEventsConfig": {
                             "topicFilter": "kv@",
+                            "concurrency": 64,
                             "discoverPods": True,
-                            "podDiscoveryConfig": {"socketPort": 5557},
+                            "podDiscoveryConfig": {
+                                "podNamespace": namespace,
+                                "podLabelSelector": pod_label_selector,
+                                "socketPort": 5557,
+                            },
+                        },
+                        "fullReportRepair": {
+                            "fullReportThreshold": 0.8,
+                            "minMissingBlocks": 32,
+                            "prefillProfileName": "prefill",
                         },
                     },
                 },
-                # Removed 2026-08-22 (prefix-cache-affinity-filter): this
-                # hard elimination gate had a structural flaw exposed by its
-                # own calibration telemetry (see prior comment history, now
-                # superseded) -- at its 0.80 default affinityThreshold, once
-                # a sticky candidate existed it narrowed to *only* that
-                # endpoint (avg 1.009 of 8) with zero regard for its current
-                # queue/load, since narrowing to a single candidate leaves
-                # nothing for token-load-scorer/queue-scorer to score. The
-                # only release valve was the filter's own coarse, binary
-                # TTFT-estimate gate (peakPrefillThroughput/maxTTFTPenaltyMs),
-                # which per that same telemetry didn't trip until a severe
-                # (p75+, ~17s+ over budget) imbalance -- a likely structural
-                # cause of the persistent per-rank waiting-queue skew, since
-                # a cache-affine-but-currently-busy rank got 100% of matching
-                # traffic until things got extreme. prefix-cache-scorer below
-                # reads PrefixCacheMatchInfo directly from
-                # precise-prefix-cache-producer (Consumes() has no coupling
-                # to this filter having run) and gives a continuous
-                # match-ratio reward on every decision, blended via weights
-                # with token-load-scorer/queue-scorer -- graceful, graduated
-                # trade-offs instead of a bimodal fully-sticky-vs-full-
-                # fallback switch. Note the 6:3:3 weight ratio below was
-                # calibrated for the fallback-only regime this filter used to
-                # gate into (~15-30% of decisions); it now governs 100% of
-                # decisions, so re-observe/retune if live behavior warrants.
                 {
-                    # Re-added 2026-08-21 after v9 regressed hard vs v7
-                    # (c160: TTFT p50 31.4s vs v7's 5.9s, throughput 4530
-                    # vs 6902 tok/s -- despite v9 having *more* prefill KV
-                    # cache than v7, ruling out capacity as the cause).
-                    # Root cause: removing this scorer left every decision
-                    # outside strict stickiness with zero cache-awareness.
-                    # Live-captured EPP logs (default verbosity -- token-
-                    # load-scorer already logs one line per candidate at
-                    # info level, no -v=4 needed) over 123 real prefill
-                    # decisions from the live c192 run: only 26.8% narrowed
-                    # to 1 sticky candidate; 73.2% saw 2-8 candidates, incl.
-                    # 30.9% seeing all 8 (full fallback to token-load-scorer
-                    # alone). Token-load spread across candidates in those
-                    # non-narrowed decisions: median 213k, p90 625k tokens --
-                    # both above the current gate's break threshold
-                    # (maxTTFTPenaltyMs 30000 * peakPrefillThroughput 4783 /
-                    # 1000 = ~143k tokens), confirming the gate is firing
-                    # well inside ambient load variance, not just on extreme
-                    # imbalances. So most decisions were being made by
-                    # token-load-scorer alone, with no partial-cache-match
-                    # tiebreak, actively scattering conversation continuity
-                    # across ranks. Weight 6 (vs token-load-scorer's 2) is
-                    # the last live-validated ratio from before the removal
-                    # -- high enough to dominate when candidates differ in
-                    # cache match, but not so high it re-fights the load
-                    # scorer's signal outright. NOT re-touching
-                    # maxTTFTPenaltyMs/peakPrefillThroughput in this change;
-                    # revisit those separately if this alone doesn't recover
-                    # v7-level local hit rates.
-                    #
-                    # prefixMatchInfoProducerName added 2026-08-22 to point at
-                    # precise-prefix-cache-producer instead of the removed
-                    # approx producer -- same weight/rationale above still
-                    # applies unchanged.
-                    "type": "prefix-cache-scorer",
-                    "parameters": {"prefixMatchInfoProducerName": "precise-prefix-cache-producer"},
+                    # Named explicitly so gpu-prefix-cache-affinity-filter
+                    # and token-load-scorer can reference it by name.
+                    # addEstimatedOutputTokens=false: output tokens aren't
+                    # known at scheduling time for prefill, so adding an
+                    # estimate would skew the inflight load signal.
+                    "type": "inflight-load-producer",
+                    "name": "inflight-load-producer",
+                    "parameters": {
+                        "addEstimatedOutputTokens": False,
+                        "prefixMatchInfoProducerName": "approx-prefix-cache-producer",
+                    },
                 },
                 {
-                    # queueThresholdTokens re-derived from the same live
-                    # prefill logs used for lruCapacityPerServer above
-                    # (gpu-memory-utilization 0.97): GPU KV cache 3,089,495
-                    # tokens/rank. Rounded to 3,000,000 tokens as the "fully
-                    # loaded" normalization point for scoring. NOT yet
-                    # live-calibrated against real gate/queue telemetry the
-                    # way maxTTFTPenaltyMs was -- worth re-checking with the
-                    # same kubectl-logs-capture method if scores look
-                    # degenerate (e.g. many ties at score 0 the way the old
-                    # 750000 queueThresholdTokens did before).
+                    # Caps prefill concurrency at maxConcurrency=8 requests
+                    # per rank (headroom=0.5 means the filter starts excluding
+                    # a rank when it reaches 50% of that cap, i.e. 4 in-flight
+                    # requests). Prevents a slow prefill rank from accumulating
+                    # an unbounded backlog while still-available ranks exist.
+                    "type": "concurrency-detector",
+                    "name": "prefill-concurrency-guard",
+                    "parameters": {
+                        "concurrencyMode": "requests",
+                        "maxConcurrency": 8,
+                        "headroom": 0.5,
+                        "inFlightLoadProducerName": "inflight-load-producer",
+                    },
+                },
+                {
+                    # Soft affinity filter: prefers cache-warm ranks via a
+                    # continuous match-ratio score (affinityThreshold=0.5 means
+                    # a rank needs >=50% prefix match to be considered sticky).
+                    # explorationProbability=0 disables random exploration.
+                    # peakPrefillThroughput calibrated via llm-d's
+                    # calibrate.sh against the live deployment: sequential
+                    # 8192-token random-token-ID requests, guaranteed cache
+                    # miss, median TTFT 1.7124s → 4783 tok/s (v16 run).
+                    # maxTTFTPenaltyMs=30000 derived from live gate telemetry
+                    # over the v16 c192 benchmark (see git history on
+                    # imarkov/dsv4-bench for full derivation).
+                    "type": "prefix-cache-affinity-filter",
+                    "name": "gpu-prefix-cache-affinity-filter",
+                    "parameters": {
+                        "affinityThreshold": 0.5,
+                        "explorationProbability": 0,
+                        "inFlightLoadProducerName": "inflight-load-producer",
+                        "maxTTFTPenaltyMs": 30000,
+                        "peakPrefillThroughput": 4783,
+                        "prefixMatchInfoProducerName": "approx-prefix-cache-producer",
+                    },
+                },
+                {
                     "type": "token-load-scorer",
-                    "parameters": {"queueThresholdTokens": 3000000},
+                    "parameters": {"inFlightLoadProducerName": "inflight-load-producer"},
                 },
-                {"type": "active-request-scorer"},
                 {
-                    # Added 2026-08-21 to prefill after diagnosing a persistent
-                    # 2-rank pileup (v10 c192: ranks 1/4 stuck at 40-90 waiting
-                    # while the other 6 drained to ~0). Root cause: prefix-cache-
-                    # scorer's MatchBlocks/TotalBlocks score is continuous and not
-                    # gated by the filter's 0.80 affinityThreshold, so even before
-                    # any endpoint is "sticky" it creates a rich-get-richer pull
-                    # toward whichever rank first captures a slice of a shared
-                    # prefix (this workload is agentic subagent trees with a
-                    # common root-context prefix across many branches). v8 had
-                    # the same mechanism but kept it smaller-scale (worst rank
-                    # ~55 vs v10's ~93) because its combined load-scorer weight
-                    # (kv-util 2 + active-request 2 + queue 2 = 6) roughly matched
-                    # its cache weight (10), a 1.67:1 ratio -- vs v10's 3:1
-                    # (prefix-cache-scorer 6 : token-load-scorer 2 alone) before
-                    # this change. queue-scorer specifically restores a signal
-                    # sourced directly from vLLM's own num_requests_waiting,
-                    # immune to the inflight-load-producer 5-minute PluginState
-                    # staleness reaping that silently zeroes out token-load-
-                    # scorer's view of long-queued (not-yet-first-token)
-                    # requests -- exactly the case on the pathological ranks.
-                    #
-                    # Note: this weight only matters in the "fallback" case
-                    # where prefix-cache-affinity-filter's own 0.80
-                    # affinityThreshold gate found no fully-sticky candidate
-                    # and handed all 8 endpoints to the scorers -- exactly the
-                    # partial-match regime (this workload's subagent trees
-                    # share large root-context prefixes well before any one
-                    # branch crosses 80%) where the rich-get-richer
-                    # concentration originates. When the filter does find a
-                    # sticky candidate, it narrows to ~1 endpoint before
-                    # scorers run, so these weights don't affect that (already
-                    # working well) path at all.
-                    #
-                    # Weight raised to 3 (both token-load-scorer and
-                    # queue-scorer) after weight=2 was deployed and diagnosed
-                    # live on the v10 c192 run: cache:load ratio of 6:4 (1.5:1)
-                    # was still cache-leaning vs v8's 1.67:1, but v8 *itself*
-                    # showed the same pathology at smaller scale (worst rank
-                    # ~55 vs v10's ~93 before this scorer was even added) --
-                    # so matching v8's ratio alone wasn't expected to be
-                    # enough. Went to 3+3=6, a 6:6 (1:1) ratio, giving load-
-                    # balancing equal say against cache-affinity in the
-                    # contested fallback regime. Trade-off: some legitimate
-                    # partial-prefix reuse across subagent branches will now
-                    # get scattered instead of consolidated, but the observed
-                    # downside (severe per-rank queue skew) outweighed that.
-                    "type": "queue-scorer",
+                    "type": "active-request-scorer",
+                    "parameters": {"inFlightLoadProducerName": "inflight-load-producer"},
                 },
-                {"type": "always-disagg-pd-decider"},
-                {"type": "disagg-profile-handler", "parameters": {"deciders": {"prefill": "always-disagg-pd-decider"}}},
-                {"type": "max-score-picker", "name": "prefill-picker"},
-                {"type": "max-score-picker", "name": "decode-picker"},
+                {"type": "max-score-picker"},
             ],
             "dataLayer": {
+                "injectDefaults": False,
                 "sources": [
                     {
                         "pluginRef": "endpoint-notification-source",
-                        "extractors": [{"pluginRef": "precise-prefix-cache-producer"}],
+                        "extractors": [{"pluginRef": "approx-prefix-cache-producer"}],
                     }
-                ]
+                ],
             },
             "schedulingProfiles": [
                 {
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
-                        {"pluginRef": "prefix-cache-scorer", "weight": 6},
-                        {"pluginRef": "token-load-scorer", "weight": 3},
-                        {"pluginRef": "queue-scorer", "weight": 3},
-                        {"pluginRef": "prefill-picker"},
+                        {"pluginRef": "prefill-concurrency-guard"},
+                        {"pluginRef": "gpu-prefix-cache-affinity-filter"},
+                        {"pluginRef": "token-load-scorer"},
+                        {"pluginRef": "max-score-picker"},
                     ],
                 },
                 {
@@ -301,7 +191,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False, model_name
                     "plugins": [
                         {"pluginRef": "decode-filter"},
                         {"pluginRef": "active-request-scorer"},
-                        {"pluginRef": "decode-picker"},
+                        {"pluginRef": "max-score-picker"},
                     ],
                 },
             ],
@@ -387,6 +277,18 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
     if layout.tp_world_size > layout.tp_local_size:
         selector["leaderworkerset.sigs.k8s.io/worker-index"] = "0"
 
+    prefill_lws_name: str | None = None
+    if spec.routing.kind == RoutingKind.PD:
+        try:
+            prefill_role = spec.role("prefill")
+            prefill_lws_name = (
+                instance.user_scoped_name(prefill_role.workload_name)
+                if prefill_role.workload_name
+                else instance.name(prefill_role.name)
+            )
+        except KeyError:
+            pass
+
     return [
         {
             "apiVersion": "v1",
@@ -446,6 +348,8 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                     spec.routing,
                     dp_enabled=role.parallelism.dp_enabled,
                     model_name=spec.model.served_name or spec.model.id,
+                    namespace=spec.namespace,
+                    prefill_lws_name=prefill_lws_name,
                 )
             },
         },
