@@ -119,6 +119,26 @@ def _plugin_config(
                     },
                 },
                 {
+                    # Hard filter: blocks a prefill endpoint when its in-flight
+                    # request count exceeds maxConcurrency * (1 + headroom) = 64.
+                    # With 8 prefill endpoints and input concurrency 256,
+                    # steady-state average is 32 per endpoint — well below 64,
+                    # so no endpoint is ever blocked in steady state. The guard
+                    # only fires during a cold-start hot-spot where one rank
+                    # accumulates requests before the affinity filter can
+                    # differentiate endpoints. All 8 endpoints would be blocked
+                    # simultaneously only at 8 × 64 = 512 concurrent in-flight
+                    # requests, which is above the benchmark concurrency of 256.
+                    "type": "concurrency-detector",
+                    "name": "prefill-concurrency-guard",
+                    "parameters": {
+                        "concurrencyMode": "requests",
+                        "maxConcurrency": 32,
+                        "headroom": 1.0,
+                        "inFlightLoadProducerName": "inflight-load-producer",
+                    },
+                },
+                {
                     # Soft affinity filter: prefers cache-warm ranks via a
                     # continuous match-ratio score (affinityThreshold=0.5 means
                     # a rank needs >=50% prefix match to be considered sticky).
@@ -165,6 +185,7 @@ def _plugin_config(
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
+                        {"pluginRef": "prefill-concurrency-guard"},
                         {"pluginRef": "gpu-prefix-cache-affinity-filter"},
                         {"pluginRef": "token-load-scorer"},
                         {"pluginRef": "max-score-picker"},
