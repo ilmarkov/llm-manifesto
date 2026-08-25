@@ -165,6 +165,14 @@ def _mooncake_client_container(
         "9300",
     ]
     env = [
+        # --host defaults to 0.0.0.0, and mooncake_client registers that
+        # literal value with the master (MountSegment/P2PHANDSHAKE) as its
+        # own reachable address for other clients' transfers. Left unset,
+        # every sidecar advertises "0.0.0.0:<port>", which peers can't
+        # actually dial -- causing intermittent TRANSFER_FAIL/"Connection
+        # refused" on batch_put/get that can cascade into a fatal engine
+        # crash. Point it at this pod's real IP instead.
+        field_ref_env("MOONCAKE_CLIENT_HOST", "status.podIP"),
         # This cluster grants RDMA NIC access (/dev/infiniband/*) via the
         # NVIDIA Container Runtime's legacy prestart hook, keyed off these
         # env vars -- not a k8s device-plugin extended resource (see
@@ -203,7 +211,14 @@ def _mooncake_client_container(
     container: dict[str, Any] = {
         "name": "mooncake-client",
         "image": cluster.mooncake.master_image,
-        "command": ["/bin/sh", "-c", mkdir_prefix + " ".join(shlex.quote(arg) for arg in command)],
+        "command": [
+            "/bin/sh",
+            "-c",
+            # --host is appended outside the shlex.quote()'d args above --
+            # it must stay unquoted so the shell expands $MOONCAKE_CLIENT_HOST
+            # (the env var isn't known until pod scheduling, via status.podIP).
+            mkdir_prefix + " ".join(shlex.quote(arg) for arg in command) + ' --host="$MOONCAKE_CLIENT_HOST"',
+        ],
         "ports": [
             {"containerPort": spec.mooncake.client_port, "name": "mc-rpc"},
             {"containerPort": 9300, "name": "metrics"},
