@@ -119,21 +119,6 @@ def _plugin_config(
                     },
                 },
                 {
-                    # Caps prefill concurrency at maxConcurrency=8 requests
-                    # per rank (headroom=0.5 means the filter starts excluding
-                    # a rank when it reaches 50% of that cap, i.e. 4 in-flight
-                    # requests). Prevents a slow prefill rank from accumulating
-                    # an unbounded backlog while still-available ranks exist.
-                    "type": "concurrency-detector",
-                    "name": "prefill-concurrency-guard",
-                    "parameters": {
-                        "concurrencyMode": "requests",
-                        "maxConcurrency": 8,
-                        "headroom": 0.5,
-                        "inFlightLoadProducerName": "inflight-load-producer",
-                    },
-                },
-                {
                     # Soft affinity filter: prefers cache-warm ranks via a
                     # continuous match-ratio score (affinityThreshold=0.5 means
                     # a rank needs >=50% prefix match to be considered sticky).
@@ -180,7 +165,6 @@ def _plugin_config(
                     "name": "prefill",
                     "plugins": [
                         {"pluginRef": "prefill-filter"},
-                        {"pluginRef": "prefill-concurrency-guard"},
                         {"pluginRef": "gpu-prefix-cache-affinity-filter"},
                         {"pluginRef": "token-load-scorer"},
                         {"pluginRef": "max-score-picker"},
