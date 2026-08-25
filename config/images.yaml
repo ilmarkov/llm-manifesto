@@ -24,6 +24,7 @@ vllm:
   pinned_nightly_2026-08-14: quay.io/rh-ee-imarkov/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9
   pinned_nightly_2026-08-14-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8a102759ba2786dd2813564f1d77029d1c770f73
   pinned_nightly_2026-08-14-fix-v1: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8899ec6b3fd07a2b5a839f8d32fc9cc6617f2274
+  pinned_nightly_2026-08-19-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-f3f11fce1e0cab36832b9323aa03275137a5b924
   nightly_2026-08-12: vllm/vllm-openai:nightly-3ee2df30337a301164c46ae444b76ee67e71c106
   # fixed_nightly: quay.io/rh-ee-imarkov/vllm-openai:a3cea7c214
 
@@ -40,7 +41,7 @@ llm_d:
   # v0.9.0 and v0.10.0. Not yet audited: routing_sidecar's own v0.9.0->v0.10.0
   # diff (34 files) -- watch the P->D NIXL transfer path after this bump.
   release: v0.10.0
-  epp: ghcr.io/llm-d/llm-d-router-endpoint-picker:{release}
+  epp: ghcr.io/vmaroon/llmd-router-epp@sha256:e8e0529166213e642a3fe4af7e8de4c4fe1e2c943227a1ce4899d941aa7e3fcd
   routing_sidecar: ghcr.io/llm-d/llm-d-router-disagg-sidecar:{release}
 
 sidecars:
