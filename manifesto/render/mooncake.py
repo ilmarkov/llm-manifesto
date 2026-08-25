@@ -47,7 +47,14 @@ def render_mooncake(
         "mode": spec.mooncake.mode,
         "metadata_server": "P2PHANDSHAKE",
         "master_server_address": f"{master_name}.{spec.namespace}.svc.cluster.local:50051",
-        "global_segment_size": spec.mooncake.global_segment_size,
+        # standalone-store requires 0 here (vLLM's MooncakeStoreConfig rejects
+        # a nonzero value): the pool's memory is contributed by each pod's
+        # mooncake_client sidecar instead (see lws.py), not by the vLLM rank
+        # itself. spec.mooncake.global_segment_size still governs that
+        # sidecar's --global_segment_size in that mode.
+        "global_segment_size": (
+            spec.mooncake.global_segment_size if spec.mooncake.mode == "embedded" else 0
+        ),
         "local_buffer_size": spec.mooncake.local_buffer_size,
         "protocol": cluster.mooncake.protocol,
         "device_name": _mooncake_device_name(cluster),
@@ -116,6 +123,43 @@ def render_mooncake(
                                     # could silently move on a version bump.
                                     "--metrics_port",
                                     "9003",
+                                    *(
+                                        # Master-side orchestration flag: queues
+                                        # completed memory writes for async SSD
+                                        # persistence. The master never holds
+                                        # cache bytes itself -- actual disk I/O
+                                        # happens on whichever mooncake_client
+                                        # (sidecar, see lws.py) owns the segment
+                                        # being evicted, via that client's own
+                                        # MOONCAKE_OFFLOAD_FILE_STORAGE_PATH.
+                                        ["--enable_offload=true"]
+                                        if spec.mooncake.enable_offload
+                                        else []
+                                    ),
+                                    *(
+                                        # Lazy SSD writes on eviction instead
+                                        # of eager writes after every Put --
+                                        # reduces SSD write amplification.
+                                        ["--offload_on_evict=true"]
+                                        if spec.mooncake.offload_on_evict
+                                        else []
+                                    ),
+                                    *(
+                                        # Allow hot SSD-only objects to be
+                                        # promoted back to DRAM on repeated
+                                        # reads (uses the master's default
+                                        # --promotion_admission_threshold=2).
+                                        ["--promotion_on_hit=true"]
+                                        if spec.mooncake.promotion_on_hit
+                                        else []
+                                    ),
+                                    *(
+                                        # Per-client disk quota -- see
+                                        # MooncakeSpec.quota_bytes docstring.
+                                        [f"--quota_bytes={spec.mooncake.quota_bytes}"]
+                                        if spec.mooncake.quota_bytes is not None
+                                        else []
+                                    ),
                                 ],
                                 "ports": [
                                     {"containerPort": 50051, "name": "grpc"},

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+import shlex
 from typing import Any
 
 from .common import env_list, field_ref_env, secret_env
+from .mooncake import _mooncake_device_name
 from .sidecars import sidecars
 from ..cluster import Cluster
 from ..instance import Instance
@@ -68,6 +71,136 @@ def _mooncake_upgrade_prefix() -> str:
     Uses mooncake-transfer-engine-cuda13 for CUDA 13.x compatibility (GB200/Blackwell).
     """
     return f"pip install --upgrade mooncake-transfer-engine-cuda13=={MOONCAKE_CLIENT_VERSION} && "
+
+
+# Fixed per-process overhead added on top of a mooncake_client's own
+# --global_segment_size when sizing its container memory limit (RPC/transfer-
+# engine buffers, DirectIO staging buffer when offload is enabled, etc.) --
+# same order of magnitude as the master's own 8Gi limit for its (much
+# lighter) control-plane-only footprint.
+_MOONCAKE_CLIENT_MEMORY_OVERHEAD_GIB = 8
+
+_SIZE_MULTIPLIERS = {
+    "": 1,
+    "B": 1,
+    "KB": 1000,
+    "MB": 1000**2,
+    "GB": 1000**3,
+    "TB": 1000**4,
+    "KIB": 1024,
+    "MIB": 1024**2,
+    "GIB": 1024**3,
+    "TIB": 1024**4,
+}
+
+
+def _parse_size_bytes(value: str) -> int:
+    """Parse a human size string like '160GB' or '4GiB' into bytes."""
+    match = re.fullmatch(r"\s*([\d.]+)\s*([A-Za-z]*)\s*", value)
+    if not match:
+        raise ValueError(f"Cannot parse size string: {value!r}")
+    number, unit = match.groups()
+    unit = unit.upper()
+    if unit not in _SIZE_MULTIPLIERS:
+        raise ValueError(f"Unknown size unit in {value!r}")
+    return int(float(number) * _SIZE_MULTIPLIERS[unit])
+
+
+def _mooncake_client_global_segment_bytes(spec: DeploymentSpec, role: RoleSpec) -> int:
+    """Total bytes this pod's mooncake_client sidecar must contribute.
+
+    spec.mooncake.global_segment_size is the *per-rank* contribution (same
+    meaning it always had): in the old embedded mode, each of a pod's local
+    ranks independently called store.setup() with this value, so a 4-local-
+    rank pod registered 4 separate segments (see the mooncake-master admin
+    metrics comment in the model YAML: "8 ranks x 160GB" is the whole role's
+    aggregate, i.e. per-pod ranks x pods). One shared sidecar now covers all
+    of that pod's local ranks, so it must contribute local_ranks x that
+    per-rank value, not just one rank's worth.
+    """
+    layout = parallel_layout(role)
+    local_ranks = layout.tp_local_size * layout.dp_local_size
+    return _parse_size_bytes(spec.mooncake.global_segment_size) * local_ranks
+
+
+def _mooncake_client_memory_limit(segment_bytes: int) -> str:
+    """Container memory limit for a mooncake_client sidecar: enough to hold
+    its full --global_segment_size (the memory it contributes to the pool)
+    plus a fixed overhead margin, rounded up to whole GiB for the k8s
+    resource string.
+    """
+    segment_gib = -(-segment_bytes // (1024**3))  # ceil
+    return f"{segment_gib + _MOONCAKE_CLIENT_MEMORY_OVERHEAD_GIB}Gi"
+
+
+def _mooncake_client_container(
+    spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec, security_context: dict
+) -> dict:
+    """Sidecar running mooncake_client (Mooncake's Method C 'resource-owning
+    real client'). Colocated with the vLLM container so it can be reached over
+    127.0.0.1 (MOONCAKE_PREFERRED_SEGMENT) -- one sidecar serves *all* of this
+    pod's local ranks (Method C explicitly supports multiple dummy/application
+    clients talking to one real client), contributing local_ranks x
+    --global_segment_size to the pool and, when enable_offload is set, owning
+    this node's local-nvme SSD tier for it.
+    """
+    master_name = instance.name("mooncake-master")
+    segment_bytes = _mooncake_client_global_segment_bytes(spec, role)
+    command = [
+        "mooncake_client",
+        "--port",
+        str(spec.mooncake.client_port),
+        "--global_segment_size",
+        str(segment_bytes),
+        "--master_server_address",
+        f"{master_name}.{spec.namespace}.svc.cluster.local:50051",
+        "--metadata_server",
+        "P2PHANDSHAKE",
+        "--protocol",
+        cluster.mooncake.protocol,
+        "--device_names",
+        _mooncake_device_name(cluster),
+        "--enable_http_server=true",
+        "--http_port",
+        "9300",
+    ]
+    env = []
+    mkdir_prefix = ""
+    if spec.mooncake.enable_offload:
+        command.append("--enable_offload=true")
+        # MOONCAKE_OFFLOAD_FILE_STORAGE_PATH must already exist and be an
+        # absolute, writable, non-symlink directory -- the client does not
+        # create it itself.
+        env.append({"name": "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", "value": "/mnt/local/mooncake-offload"})
+        mkdir_prefix = "mkdir -p /mnt/local/mooncake-offload && "
+
+    container: dict[str, Any] = {
+        "name": "mooncake-client",
+        "image": cluster.mooncake.master_image,
+        "command": ["/bin/sh", "-c", mkdir_prefix + " ".join(shlex.quote(arg) for arg in command)],
+        "ports": [
+            {"containerPort": spec.mooncake.client_port, "name": "mc-rpc"},
+            {"containerPort": 9300, "name": "metrics"},
+        ],
+        "env": env,
+        "securityContext": security_context,
+        "volumeMounts": cluster.volume_mounts(),
+        "readinessProbe": {
+            "tcpSocket": {"port": spec.mooncake.client_port},
+            "initialDelaySeconds": 5,
+            "periodSeconds": 5,
+            "timeoutSeconds": 3,
+            "failureThreshold": 6,
+        },
+        "resources": {
+            "requests": {"cpu": "4", "memory": _mooncake_client_memory_limit(segment_bytes)},
+            "limits": {"cpu": "8", "memory": _mooncake_client_memory_limit(segment_bytes)},
+        },
+    }
+    if cluster.rdma.resource_name:
+        for key in ("requests", "limits"):
+            container["resources"][key][cluster.rdma.resource_name] = cluster.rdma.value
+    return container
 
 
 def _readiness_probe_cmd(role: RoleSpec, readiness_ports: list[int]) -> str:
@@ -169,6 +302,19 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         )
     if spec.mooncake.enabled:
         container_env.append({"name": "MOONCAKE_CONFIG_PATH", "value": "/etc/mooncake/mooncake_config.json"})
+    uses_mooncake_client_sidecar = (
+        spec.mooncake.enabled
+        and spec.mooncake.mode == "standalone-store"
+        and _uses_mooncake_store_connector(role.kv_transfer_config)
+    )
+    if uses_mooncake_client_sidecar:
+        # Reach this pod's own mooncake_client sidecar (below) instead of
+        # contributing memory in-process -- see mooncake.py for why
+        # global_segment_size is forced to 0 in this mode.
+        container_env.append(
+            {"name": "MOONCAKE_PREFERRED_SEGMENT", "value": f"127.0.0.1:{spec.mooncake.client_port}"}
+        )
+        containers.append(_mooncake_client_container(spec, instance, cluster, role, security_context))
 
     launch_script = build_launch_script(
         spec,
@@ -307,12 +453,24 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     }
 
 
-def _uses_nixl_connector(value: Any) -> bool:
+def _uses_connector(value: Any, name_substr: str) -> bool:
+    """Recursively search a kv_transfer_config tree (including nested
+    MultiConnector `connectors` lists) for a kv_connector name containing
+    name_substr, case-insensitively.
+    """
     if isinstance(value, dict):
         connector = value.get("kv_connector")
-        if isinstance(connector, str) and "nixl" in connector.casefold():
+        if isinstance(connector, str) and name_substr in connector.casefold():
             return True
-        return any(_uses_nixl_connector(item) for item in value.values())
+        return any(_uses_connector(item, name_substr) for item in value.values())
     if isinstance(value, (list, tuple)):
-        return any(_uses_nixl_connector(item) for item in value)
+        return any(_uses_connector(item, name_substr) for item in value)
     return False
+
+
+def _uses_nixl_connector(value: Any) -> bool:
+    return _uses_connector(value, "nixl")
+
+
+def _uses_mooncake_store_connector(value: Any) -> bool:
+    return _uses_connector(value, "mooncakestore")

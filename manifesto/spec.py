@@ -169,6 +169,22 @@ class MooncakeSpec(BaseModel):
     local_buffer_size: str = "4GB"
     mode: Literal["embedded", "standalone-store"] = "embedded"
     enable_offload: bool = False
+    # Master-side offload tuning, only meaningful when enable_offload=true.
+    # offload_on_evict: write to SSD only on eviction (lazy) instead of
+    # eagerly after every Put -- trades write amplification for latency.
+    offload_on_evict: bool = False
+    # promotion_on_hit: let frequently-read SSD-only objects get promoted
+    # back to DRAM (reduces re-read latency for hot data demoted to disk).
+    promotion_on_hit: bool = False
+    # Per-client (per mooncake_client sidecar) disk quota in bytes, enforced
+    # by the master against each client's own reported local-disk capacity
+    # (not a cluster-wide aggregate). None keeps the master's own default
+    # (90% of each client's reported disk capacity).
+    quota_bytes: int | None = None
+    # RPC control port for the standalone-store mooncake_client sidecar (Method
+    # C in Mooncake's deployment guide). vLLM's MOONCAKE_PREFERRED_SEGMENT
+    # points at 127.0.0.1:{client_port} to reach its pod-local sidecar.
+    client_port: int = 50052
     replicas: int = Field(1, ge=1)
 
 

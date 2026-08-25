@@ -69,6 +69,46 @@ extraScrapeConfigs: |
     scrape_interval: 1s
     metrics_path: /metrics
 
+  - job_name: 'mooncake-master'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - vllm
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        regex: mooncake-master
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: '9003'
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  - job_name: 'mooncake-client'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - vllm
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        regex: mooncake-client
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: '9300'
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+    scrape_interval: 5s
+    metrics_path: /metrics
+
   - job_name: 'nyann-bench'
     kubernetes_sd_configs:
       - role: pod

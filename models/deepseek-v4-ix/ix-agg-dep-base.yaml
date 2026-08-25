@@ -14,7 +14,8 @@ model:
   # image_ref: vllm.nightly
   # image_ref: vllm.nightly_2026-08-04
   # image_ref: vllm.nightly_2026-08-05
-  image_ref: vllm.pinned_nightly_2026-08-14-fix
+  # image_ref: vllm.pinned_nightly_2026-08-14-fix
+  image_ref: vllm.pinned_nightly_2026-08-19-fix
   # image_ref: vllm.standard
   # image_ref: vllm.fixed_nighlty
   served_name: deepseek-ai/DeepSeek-V4-Pro

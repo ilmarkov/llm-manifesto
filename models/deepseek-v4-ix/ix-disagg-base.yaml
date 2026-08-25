@@ -13,8 +13,27 @@ mooncake:
   # SimpleCPUOffloadConnector config, to keep combined tier footprint
   # (158GiB/rank) within the new node headroom (~37GiB/pod left on a
   # 956.8GiB GB200 node at the new 920Gi container limit).
-  global_segment_size: "120GB"
+  global_segment_size: "160GB"
   local_buffer_size: "4GB"
+  # standalone-store 2026-08-25: moves the 160GB/rank pool contribution out of
+  # the vLLM process and into a mooncake_client sidecar (see lws.py) that's
+  # colocated in the same pod, reached over 127.0.0.1. Unlike embedded mode,
+  # this is Mooncake's officially-supported path for a real SSD tier (Method
+  # C, "resource-owning real client") -- embedded mode's enable_offload only
+  # catches puts that happen to land on a single designated owner segment.
+  # Aggregate memory footprint is unchanged (still 8 x 160GB); see prefill
+  # role's resources.memory below for where that 160GB/rank now lives instead.
+  mode: standalone-store
+  enable_offload: true
+  # Lazy SSD writes (only on eviction, not eagerly after every Put) to limit
+  # SSD write amplification on the shared local NVMe.
+  offload_on_evict: true
+  # Let hot SSD-only objects get promoted back to DRAM on repeated reads,
+  # using the master's default --promotion_admission_threshold=2.
+  promotion_on_hit: true
+  # Per-client (per mooncake_client sidecar) disk cap, well under the
+  # 14TB local NVMe RAID (/mnt/local) shared with other pod workloads.
+  quota_bytes: 4000000000000
 
 model:
   id: deepseek-ai/DeepSeek-V4-Pro
@@ -23,7 +42,8 @@ model:
   # image_ref: vllm.standard
   # image_ref: vllm.pinned_nightly_2026-08-07
   # image_ref: vllm.pinned_nightly_2026-08-14
-  image_ref: vllm.pinned_nightly_2026-08-14-fix
+  # image_ref: vllm.pinned_nightly_2026-08-14-fix
+  image_ref: vllm.pinned_nightly_2026-08-19-fix
   # image_ref: vllm.fixed_nightly
   # image_ref: vllm.nightly_2026-08-12
   served_name: deepseek-ai/DeepSeek-V4-Pro
@@ -62,6 +82,7 @@ roles:
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "32768"
       VLLM_USE_DEEP_GEMM: "1"
+      VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
       # VLLM_V2_WARMUP_MAX_NUM_SEQS: "32"  # Not recognized by current vLLM; awaiting shared JIT warmup infra (vllm PR #47451)
       MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
@@ -109,25 +130,32 @@ roles:
             kv_buffer_device: cuda
             # kv_connector_extra_config:
             #   enforce_handshake_compat: false
-          - kv_connector: SimpleCPUOffloadConnector
-            kv_role: kv_both
-            kv_connector_extra_config:
-              # 40GB->38GB/rank 2026-08-21, paired with mooncake 80GB->120GB/rank
-              # above: kept combined tier footprint at 158GiB/rank (same total as
-              # originally planned 108+50 split) while shifting more of the
-              # increase to mooncake, since it's the tier with confirmed eviction
-              # pressure (master admin metrics: 88.4% full, 2.06TB already
-              # evicted); CPU-offload has no eviction telemetry of its own to
-              # confirm the same pressure. See resources.memory below and
-              # mooncake.global_segment_size above for the full accounting.
-              cpu_bytes_to_use: 40802189312
+          # - kv_connector: SimpleCPUOffloadConnector
+          #   kv_role: kv_both
+          #   kv_connector_extra_config:
+          #     # 40GB->38GB/rank 2026-08-21, paired with mooncake 80GB->120GB/rank
+          #     # above: kept combined tier footprint at 158GiB/rank (same total as
+          #     # originally planned 108+50 split) while shifting more of the
+          #     # increase to mooncake, since it's the tier with confirmed eviction
+          #     # pressure (master admin metrics: 88.4% full, 2.06TB already
+          #     # evicted); CPU-offload has no eviction telemetry of its own to
+          #     # confirm the same pressure. See resources.memory below and
+          #     # mooncake.global_segment_size above for the full accounting.
+          #     cpu_bytes_to_use: 40802189312
           - kv_connector: MooncakeStoreConnector
             kv_role: kv_both
             kv_connector_extra_config:
               load_async: true
               lookup_async: true
               enable_cross_layers_blocks: false
-              enable_offload: false
+              # Real toggle lives in mooncake.enable_offload above (rendered
+              # into mooncake_config.json, which is what vLLM's
+              # MooncakeStoreConfig.from_file() actually reads). vLLM's
+              # MooncakeStoreConnector does not read an `enable_offload` key
+              # out of kv_connector_extra_config at all -- a stale `false`
+              # was left here previously despite mooncake.enable_offload
+              # being the real, effective setting; removed to avoid the two
+              # looking contradictory.
     env:
       PYTHONHASHSEED: "0"
       VLLM_USE_V2_MODEL_RUNNER: "1"
@@ -167,16 +195,20 @@ roles:
       VLLM_USE_DEEP_GEMM: "1"
     resources:
       ephemeral_storage: 128Gi
-      # 768Gi->920Gi 2026-08-21 to make room for the mooncake/cpu-offload tier
-      # increase (see kv_transfer_config above). GB200 node has 956.8GiB
-      # allocatable (4 DP ranks/pod = 1 pod/node); this leaves ~37GiB headroom
-      # for sidecars (dcgm/node-exporter, ~0.56GiB), kubelet/system reserve,
-      # and transient spikes (we've seen torch-allocator pressure during JIT
-      # compilation at high gpu_memory_utilization). Actual steady-state usage
-      # was ~577GiB at the old 480GB/pod tier footprint (768Gi limit), so this
-      # tracks the same limit-vs-actual-usage slack ratio the deployment
-      # already ran safely with, not a new risk profile.
-      memory: 920Gi
+      # 920Gi->323Gi 2026-08-25: mooncake standalone-store (see mooncake.mode
+      # above) moves the mooncake pool contribution out of this container and
+      # into the new mooncake-client sidecar. This pod runs 4 local DP ranks
+      # (dp=8 / lws.size=2), and each one used to independently register its
+      # own 160GB segment in embedded mode -- i.e. this container was holding
+      # 4 x 160GB (~597GiB, ceil), not just one rank's worth. One shared
+      # sidecar now covers all 4 (see lws.py's _mooncake_client_container),
+      # sized to ~605Gi (597Gi + 8Gi overhead, _mooncake_client_memory_limit).
+      # GB200 node has 956.8GiB allocatable (4 DP ranks/pod = 1 pod/node):
+      # 323 (vllm) + 605 (mooncake-client) + ~0.56 (dcgm/node-exporter) =
+      # ~928.6GiB, leaving ~28GiB headroom for kubelet/system reserve and
+      # transient spikes -- comparable to the previous ~37GiB. Watch actual
+      # steady-state usage on first deploy and adjust if headroom is tight.
+      memory: 323Gi
     vllm:
       load_format: auto
       trust_remote_code: true
