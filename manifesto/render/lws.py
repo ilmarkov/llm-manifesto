@@ -160,6 +160,12 @@ def _mooncake_client_container(
         cluster.mooncake.protocol,
         "--device_names",
         _mooncake_device_name(cluster),
+        # Defaults to 1 -- this single sidecar's RPC control plane serves
+        # *all* of the pod's local ranks (dummy clients) concurrently, so one
+        # thread can serialize their batch_put/batch_get dispatch. Match the
+        # CPU request below so control-plane concurrency scales with it.
+        "--threads",
+        "4",
         "--enable_http_server=true",
         "--http_port",
         "9300",
