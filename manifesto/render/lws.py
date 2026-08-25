@@ -186,6 +186,19 @@ def _mooncake_client_container(
         # create it itself.
         env.append({"name": "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", "value": "/mnt/local/mooncake-offload"})
         mkdir_prefix = "mkdir -p /mnt/local/mooncake-offload && "
+        if spec.mooncake.quota_bytes is not None:
+            # The master's --quota_bytes (mooncake.py) is only wired to the
+            # legacy --root_fs_dir persistence path in client_service.cpp --
+            # it's silently dropped for the real --enable_offload/bucket-
+            # storage path we use here. This env var is the actual knob
+            # BucketBackendConfig::FromEnvironment() reads for max_total_size
+            # (eviction policy already defaults to FIFO, not NONE).
+            env.append(
+                {
+                    "name": "MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE",
+                    "value": str(spec.mooncake.quota_bytes),
+                }
+            )
 
     container: dict[str, Any] = {
         "name": "mooncake-client",

@@ -153,13 +153,20 @@ def render_mooncake(
                                         if spec.mooncake.promotion_on_hit
                                         else []
                                     ),
-                                    *(
-                                        # Per-client disk quota -- see
-                                        # MooncakeSpec.quota_bytes docstring.
-                                        [f"--quota_bytes={spec.mooncake.quota_bytes}"]
-                                        if spec.mooncake.quota_bytes is not None
-                                        else []
-                                    ),
+                                    # Deliberately NOT passing --quota_bytes here:
+                                    # client_service.cpp only forwards the master's
+                                    # quota_bytes (from GetStorageConfig()) into
+                                    # PrepareStorageBackend() on the legacy
+                                    # --root_fs_dir/fsdir path, which we never use
+                                    # (see comment on global_segment_size above --
+                                    # standalone-store + enable_offload never sets
+                                    # root_fs_dir). It's silently dropped on our
+                                    # real --enable_offload/bucket-storage path, so
+                                    # setting it here would be a no-op that implies
+                                    # false enforcement. The actual per-client disk
+                                    # cap is spec.mooncake.quota_bytes, applied via
+                                    # MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE on the
+                                    # mooncake_client sidecar itself (see lws.py).
                                 ],
                                 "ports": [
                                     {"containerPort": 50051, "name": "grpc"},
