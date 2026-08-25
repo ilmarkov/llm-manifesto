@@ -134,7 +134,12 @@ def _mooncake_client_memory_limit(segment_bytes: int) -> str:
 
 
 def _mooncake_client_container(
-    spec: DeploymentSpec, instance: Instance, cluster: Cluster, role: RoleSpec, security_context: dict
+    spec: DeploymentSpec,
+    instance: Instance,
+    cluster: Cluster,
+    role: RoleSpec,
+    security_context: dict,
+    resource_claims: list[dict] | None = None,
 ) -> dict:
     """Sidecar running mooncake_client (Mooncake's Method C 'resource-owning
     real client'). Colocated with the vLLM container so it can be reached over
@@ -200,6 +205,12 @@ def _mooncake_client_container(
     if cluster.rdma.resource_name:
         for key in ("requests", "limits"):
             container["resources"][key][cluster.rdma.resource_name] = cluster.rdma.value
+    if resource_claims:
+        # Same DRA claim(s) as the vllm container (e.g. compute-domain-channel
+        # for RDMA NICs) -- without this the sidecar has no RNIC visibility at
+        # all ("No available RNIC", transfer engine init fails) even though
+        # --device_names/--protocol=rdma are set correctly.
+        container["resources"]["claims"] = [{"name": claim["name"]} for claim in resource_claims]
     return container
 
 
@@ -314,7 +325,11 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         container_env.append(
             {"name": "MOONCAKE_PREFERRED_SEGMENT", "value": f"127.0.0.1:{spec.mooncake.client_port}"}
         )
-        containers.append(_mooncake_client_container(spec, instance, cluster, role, security_context))
+        containers.append(
+            _mooncake_client_container(
+                spec, instance, cluster, role, security_context, resolved.resource_claims
+            )
+        )
 
     launch_script = build_launch_script(
         spec,
