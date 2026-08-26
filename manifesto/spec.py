@@ -106,6 +106,13 @@ class RoleSpec(BaseModel):
     # compensation); topic/endpoint are computed in launch.py from that port
     # plus the pod's own address and model name.
     kv_events_config: dict[str, Any] | None = None
+    # Enables P2P secondary tier in OffloadingConnector.  Only {"port": <int>}
+    # is read (base ZMQ-style port before per-rank compensation; each pod
+    # exposes the same fixed local range port..port+dp_local_size-1).
+    # Triggers: P2P_BASE shell var, POD_IP / VLLM_P2P_SIDE_CHANNEL_HOST
+    # fieldRef env vars, P2P container ports, and dynamic kv_transfer_config
+    # building that substitutes __POD_IP__ / __P2P_PORT__ sentinels.
+    p2p_config: dict[str, Any] | None = None
     vllm_args: dict[str, Any] = Field(
         default_factory=dict, validation_alias=AliasChoices("vllm", "vllm_args")
     )

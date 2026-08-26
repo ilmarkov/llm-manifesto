@@ -77,7 +77,7 @@ def _plugin_config(
                     "name": "approx-prefix-cache-producer",
                     "parameters": {
                         "tokenProcessorConfig": {"blockSizeTokens": 256},
-                        "speculativeIndexing": False,
+                        "speculativeIndexing": True,
                         "indexerConfig": {
                             "kvBlockIndexConfig": {
                                 "enableMetrics": True,
@@ -139,22 +139,24 @@ def _plugin_config(
                     },
                 },
                 {
-                    # Soft affinity filter: prefers cache-warm ranks via a
-                    # continuous match-ratio score (affinityThreshold=0.5 means
-                    # a rank needs >=50% prefix match to be considered sticky).
-                    # explorationProbability=0 disables random exploration.
-                    # peakPrefillThroughput calibrated via llm-d's
-                    # calibrate.sh against the live deployment: sequential
-                    # 8192-token random-token-ID requests, guaranteed cache
-                    # miss, median TTFT 1.7124s → 4783 tok/s (v16 run).
-                    # maxTTFTPenaltyMs=30000 derived from live gate telemetry
-                    # over the v16 c192 benchmark (see git history on
-                    # imarkov/dsv4-bench for full derivation).
+                    # TTFT-gate affinity filter: excludes an endpoint only when
+                    # routing to it would incur >maxTTFTPenaltyMs extra latency
+                    # vs the best cached endpoint. peakPrefillThroughput
+                    # calibrated via llm-d's calibrate.sh against the live
+                    # deployment: sequential 8192-token random-token-ID
+                    # requests, guaranteed cache miss, median TTFT 1.7124s →
+                    # 4783 tok/s (v16 run). maxTTFTPenaltyMs=30000 derived from
+                    # live gate telemetry over the v16 c192 benchmark (see git
+                    # history on imarkov/dsv4-bench for full derivation).
+                    # affinityThreshold intentionally omitted: match-ratio
+                    # hard-exclusion caused cold ranks to be permanently starved.
+                    # explorationProbability intentionally omitted: no-hit-lru-scorer
+                    # handles cold-start starvation directly (steers zero-hit requests
+                    # to the LRU rank), so random exploration of cache-hit requests
+                    # would only waste throughput in steady state.
                     "type": "prefix-cache-affinity-filter",
                     "name": "gpu-prefix-cache-affinity-filter",
                     "parameters": {
-                        "affinityThreshold": 0.5,
-                        "explorationProbability": 0,
                         "inFlightLoadProducerName": "inflight-load-producer",
                         "maxTTFTPenaltyMs": 30000,
                         "peakPrefillThroughput": 4783,
@@ -164,6 +166,20 @@ def _plugin_config(
                 {
                     "type": "token-load-scorer",
                     "parameters": {"inFlightLoadProducerName": "inflight-load-producer"},
+                },
+                {
+                    # Cold-burst distributor: for requests where no candidate
+                    # endpoint has any matching KV blocks (cold requests), scores
+                    # endpoints by reverse-LRU of cold-request assignments so that
+                    # ranks that have never (or least recently) received a cold
+                    # request are preferred. On cache-hit requests it returns
+                    # neutral scores (0.5) and defers fully to token-load-scorer.
+                    # Weight 1:1 with token-load-scorer so it dominates cold-start
+                    # but does not override the load signal in steady state.
+                    "type": "no-hit-lru-scorer",
+                    "parameters": {
+                        "prefixMatchInfoProducerName": "approx-prefix-cache-producer",
+                    },
                 },
                 {
                     "type": "active-request-scorer",
@@ -187,7 +203,8 @@ def _plugin_config(
                         {"pluginRef": "prefill-filter"},
                         {"pluginRef": "prefill-concurrency-guard"},
                         {"pluginRef": "gpu-prefix-cache-affinity-filter"},
-                        {"pluginRef": "token-load-scorer"},
+                        {"pluginRef": "token-load-scorer", "weight": 1},
+                        {"pluginRef": "no-hit-lru-scorer", "weight": 1},
                         {"pluginRef": "max-score-picker"},
                     ],
                 },
@@ -415,6 +432,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                     "--grpc-port=9002",
                                     f"--pool-name={infpool_name}",
                                     f"--pool-namespace={spec.namespace}",
+                                    "--zap-log-level=debug",
                                 ],
                                 "ports": [{"containerPort": 9002, "name": "grpc"}],
                                 "volumeMounts": [
