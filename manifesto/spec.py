@@ -82,6 +82,7 @@ class ResourceSpec(BaseModel):
     memory: str = "512Gi"
     gpus: int = Field(DEFAULT_GPUS_PER_POD, ge=0)
     ephemeral_storage: str = "128Gi"
+    shm_size: str | None = None
 
     @field_validator("cpu", "memory", mode="before")
     @classmethod
@@ -122,7 +123,6 @@ class RoleSpec(BaseModel):
     vars: dict[str, Any] = Field(default_factory=dict)
     computed: dict[str, dict[str, Any]] = Field(default_factory=dict)
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
-    shm_size: str | None = None
 
     @property
     def gpus_per_pod(self) -> int:

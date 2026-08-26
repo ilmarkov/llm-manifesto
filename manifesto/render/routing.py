@@ -19,6 +19,8 @@ def _plugin_config(
     model_name: str | None = None,
     namespace: str = "default",
     prefill_lws_name: str | None = None,
+    enable_p2p: bool = False,
+    tokenizer_url: str = "http://localhost:8000",
 ) -> str:
     if routing.plugin_config is not None:
         return yaml.safe_dump(routing.plugin_config, sort_keys=False)
@@ -48,7 +50,7 @@ def _plugin_config(
                     "type": "token-producer",
                     "parameters": {
                         "modelName": model_name,
-                        "vllm": {"url": "http://localhost:8000", "timeout": "15s"},
+                        "vllm": {"url": tokenizer_url, "timeout": "15s"},
                     },
                 },
                 {
@@ -77,7 +79,7 @@ def _plugin_config(
                     "name": "approx-prefix-cache-producer",
                     "parameters": {
                         "tokenProcessorConfig": {"blockSizeTokens": 256},
-                        "speculativeIndexing": True,
+                        "speculativeIndexing": False,
                         "indexerConfig": {
                             "kvBlockIndexConfig": {
                                 "enableMetrics": True,
@@ -105,6 +107,29 @@ def _plugin_config(
                         },
                     },
                 },
+                *(
+                    [
+                        {
+                            # Reads the precise-prefix-cache index and, when a
+                            # request's cached-token delta on a prefill exceeds
+                            # minCachedTokenDelta, adds x-kv-cache-source-host-port
+                            # so the decode sidecar (--enable-p2p-pull) injects
+                            # remote_kv_source into the prefill leg, triggering a
+                            # cross-prefill P2P pull from the source's CPU tier.
+                            # minCachedTokenDelta is provisional; measure the
+                            # pull-vs-recompute crossover for DeepSeek-V4 on GB200
+                            # before finalising (spec §4 note).
+                            "type": "p2p-source-producer",
+                            "parameters": {
+                                "prefixMatchInfoProducerName": "approx-prefix-cache-producer",
+                                "prefillProfileName": "prefill",
+                                "minCachedTokenDelta": 2048,
+                            },
+                        }
+                    ]
+                    if enable_p2p
+                    else []
+                ),
                 {
                     # Named explicitly so gpu-prefix-cache-affinity-filter
                     # and token-load-scorer can reference it by name.
@@ -300,6 +325,7 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
         selector["leaderworkerset.sigs.k8s.io/worker-index"] = "0"
 
     prefill_lws_name: str | None = None
+    tokenizer_svc_name: str | None = None
     if spec.routing.kind == RoutingKind.PD:
         try:
             prefill_role = spec.role("prefill")
@@ -310,6 +336,13 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
             )
         except KeyError:
             pass
+        tokenizer_svc_name = instance.name("vllm-tokenize")
+
+    tokenizer_url = (
+        f"http://{tokenizer_svc_name}.{spec.namespace}.svc.cluster.local:8000"
+        if tokenizer_svc_name
+        else "http://localhost:8000"
+    )
 
     return [
         {
@@ -372,9 +405,35 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                     model_name=spec.model.served_name or spec.model.id,
                     namespace=spec.namespace,
                     prefill_lws_name=prefill_lws_name,
+                    enable_p2p=any(r.p2p_config for r in spec.roles),
+                    tokenizer_url=tokenizer_url,
                 )
             },
         },
+        *(
+            [
+                {
+                    # Tokenizer Service: load-balances EPP token-producer calls
+                    # across all serving pods (prefill + decode). Uses the named
+                    # port "vllm-0" so kube-proxy resolves per pod: 8000 on
+                    # prefill (vLLM direct) and 8200 on decode (vLLM behind the
+                    # routing sidecar). No role filter needed — all pods expose
+                    # vllm-0 under the same name via lws.py port assignment.
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {
+                        "name": tokenizer_svc_name,
+                        "labels": instance.labels("tokenizer"),
+                    },
+                    "spec": {
+                        "selector": instance.pod_selector() | {"llm-d.ai/inferenceServing": "true"},
+                        "ports": [{"name": "http", "port": 8000, "targetPort": "vllm-0", "protocol": "TCP"}],
+                    },
+                }
+            ]
+            if tokenizer_svc_name
+            else []
+        ),
         {
             "apiVersion": "inference.networking.k8s.io/v1",
             "kind": "InferencePool",
@@ -430,8 +489,12 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                 "args": [
                                     "--config-file=/etc/epp/plugins.yaml",
                                     "--grpc-port=9002",
+                                    "--grpc-health-port=9003",
                                     f"--pool-name={infpool_name}",
                                     f"--pool-namespace={spec.namespace}",
+                                    "--pool-group=inference.networking.k8s.io",
+                                    "--allow-experimental-plugins",
+                                    "--refresh-metrics-interval=500ms",
                                     "--zap-log-level=debug",
                                 ],
                                 "ports": [{"containerPort": 9002, "name": "grpc"}],
@@ -443,70 +506,18 @@ def render_routing(spec: DeploymentSpec, instance: Instance, cluster: Cluster) -
                                     "limits": {"cpu": "8", "memory": "16Gi"},
                                 },
                             },
-                            *(
-                                [
-                                    {
-                                        # CPU-only tokenizer sidecar for
-                                        # token-producer's vllm backend, so
-                                        # precise-prefix-cache-producer gets
-                                        # real token IDs without adding load
-                                        # to GPU-serving pods. This EPP
-                                        # Deployment is pinned to amd64 nodes
-                                        # (see nodeAffinity above), separate
-                                        # from the arm64 GPU nodepool, so it
-                                        # can't use spec.model.image if that's
-                                        # an arm64-only custom build. Doesn't
-                                        # need our patches though: `--tokenizer
-                                        # -mode` and `vllm launch render` are
-                                        # both plain upstream vLLM features,
-                                        # so any reasonably current public
-                                        # image produces the same token IDs
-                                        # (and thus the same KV-block hashes)
-                                        # as the real engines, as long as our
-                                        # branch hasn't locally patched
-                                        # tokenizer/renderer/parser code for
-                                        # this model (verified true as of
-                                        # 2026-08-22). Must be the dedicated
-                                        # `-cpu` build, not the CUDA-targeted
-                                        # vllm-openai image: vLLM's platform
-                                        # auto-detection only activates
-                                        # CpuPlatform if the installed
-                                        # package's version string is tagged
-                                        # `+cpu` (or on macOS) -- on a plain
-                                        # CUDA build with no GPU present, it
-                                        # resolves to UnspecifiedPlatform and
-                                        # crashes with "Failed to infer
-                                        # device type" instead of falling
-                                        # back to CPU.
-                                        "name": "vllm-render",
-                                        "image": spec.routing.render_image or "vllm/vllm-openai-cpu:latest",
-                                        "imagePullPolicy": "Always",
-                                        "command": ["vllm", "launch", "render"],
-                                        "args": [
-                                            spec.model.id,
-                                            "--port=8000",
-                                            *(["--trust-remote-code"] if role.vllm_args.get("trust_remote_code") else []),
-                                            *(
-                                                [f"--tokenizer-mode={role.vllm_args['tokenizer_mode']}"]
-                                                if role.vllm_args.get("tokenizer_mode")
-                                                else []
-                                            ),
-                                        ],
-                                        "env": [secret_env("HF_TOKEN", "hf-secret", "HF_TOKEN")],
-                                        "ports": [{"containerPort": 8000, "name": "render"}],
-                                        "readinessProbe": {
-                                            "httpGet": {"path": "/health", "port": 8000},
-                                            "periodSeconds": 5,
-                                        },
-                                        "resources": {
-                                            "requests": {"cpu": "4", "memory": "16Gi"},
-                                            "limits": {"cpu": "4", "memory": "16Gi"},
-                                        },
-                                    }
-                                ]
-                                if spec.routing.kind == RoutingKind.PD
-                                else []
-                            ),
+                            # vllm-render sidecar disabled: token-producer now
+                            # calls the vllm-tokenize Service (prefill pods,
+                            # port 8000) which scales with the prefill fleet and
+                            # avoids a separate CPU container on the EPP node.
+                            # Re-enable by reverting tokenizer_url to localhost
+                            # and restoring the sidecar block below.
+                            #
+                            # *(
+                            #     [{"name": "vllm-render", "image": spec.routing.render_image or "vllm/vllm-openai-cpu:latest", ...}]
+                            #     if spec.routing.kind == RoutingKind.PD
+                            #     else []
+                            # ),
                         ],
                         "volumes": [{"name": "config", "configMap": {"name": instance.name("epp-config")}}],
                     },

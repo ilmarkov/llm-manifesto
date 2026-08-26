@@ -101,8 +101,8 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         dcgm_config_name=instance.name("dcgm-metrics"),
     )
     volumes = cluster.base_volumes()
-    if role.shm_size:
-        volumes[0]["emptyDir"]["sizeLimit"] = role.shm_size
+    if role.resources.shm_size:
+        volumes[0]["emptyDir"]["sizeLimit"] = role.resources.shm_size
     volumes.extend(extra_volumes)
     if spec.mooncake.enabled:
         volumes.append(_mooncake_volume(instance))
@@ -154,6 +154,11 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
                     # unrecognized flag (pflag defaults to ExitOnError),
                     # crash-looping the decode pod's routing-proxy sidecar.
                     "--kv-connector=nixlv2",
+                    # Required for the sidecar to inject remote_kv_source into
+                    # the prefill leg so the prefiller's OffloadingConnector
+                    # can P2P-pull cached blocks from a peer prefill's CPU tier
+                    # (MultiConnector routes it; NIXL still handles PD transfer).
+                    "--enable-p2p-pull",
                 ],
                 "ports": [
                     {"containerPort": port, "name": f"rank{idx}", "protocol": "TCP"}
