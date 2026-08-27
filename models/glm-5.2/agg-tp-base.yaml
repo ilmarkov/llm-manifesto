@@ -1,0 +1,60 @@
+# GLM-5.2-FP8 aggregated TP8 base on GB200 NVL72 (oci-gb200) — one worker
+# spanning 2x4-GPU nodes. Plain tensor parallelism, no data/expert parallelism.
+#
+# Topology matches InferenceX's own GB200 GLM-5.2 AgentX aggregated recipe
+# (SemiAnalysisAI/InferenceX benchmarks/multi_node/srt-slurm-recipes/sglang/
+# glm5.2/gb200-fp4/agentic/agg-gb200-tp8-c*-mtp.yaml): agg_nodes=2,
+# gpus_per_agg=8, tensor-parallel-size=8, expert-parallel-size=1. That recipe
+# is SGLang+Dynamo on the NVFP4 checkpoint; the vLLM flags below instead
+# follow the llm-d GLM-5.2-FP8 H200 guide
+# (github.com/llm-d/llm-d guides/agentic-serving/glm-5-2-h200.md), adapted to
+# a single aggregated role with plain TP (no wide-EP all2all/kv_transfer).
+topology: aggregated
+
+model:
+  id: zai-org/GLM-5.2-FP8
+  label: GLM-5.2-FP8
+  # Guide requires a vLLM build with GLM-5.2 support (glm45/glm47 parsers,
+  # vllm-project/vllm#44244); vllm.standard (v0.26.0) should cover this but
+  # bump to a newer pin if GLM-5.2 loading fails.
+  image_ref: vllm.pinned_nightly_2026-08-14
+  served_name: zai-org/GLM-5.2-FP8
+
+routing: {kind: load_aware, target_role: decode}
+runtime: {sidecars: [dcgm-exporter, node-exporter]}
+
+roles:
+  - name: decode
+    workload_name: vllm-tp8-agg
+    lws: {size: 2, replicas: 1}
+    parallelism: {tp: 8, dp: false, ep: false}
+    env:
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
+      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      DG_JIT_CACHE_DIR: /tmp/dg-cache-glm-5-2-fp8-agg
+      UCX_MEMTYPE_REG_WHOLE: "n"
+      UCX_RCACHE_MAX_UNRELEASED: "1024"
+      UCX_TLS: cuda_copy,cuda_ipc,tcp
+      UCX_CUDA_IPC_ENABLE_MNNVL: "y"
+      NCCL_P2P_LEVEL: NVL
+
+    resources:
+      ephemeral_storage: 256Gi
+    vllm:
+      load_format: auto
+      disable_uvicorn_access_log: true
+      trust_remote_code: true
+      kv_cache_dtype: fp8
+      max_model_len: auto
+      disable_access_log_for_endpoints: /health,/metrics
+      reasoning_parser: glm45
+      tool_call_parser: glm47
+      enable_auto_tool_choice: true
+      # Starting point only: InferenceX's real GB200 TP8 agg recipe runs at
+      # max-running-requests=10/cuda-graph-max-bs=10 (NVFP4, no MTP); these
+      # are rounded up slightly for the FP8 checkpoint and need tuning.
+      gpu_memory_utilization: "0.85"
+      max_num_seqs: 16
+      max_num_batched_tokens: 8192
+      max_cudagraph_capture_size: 16

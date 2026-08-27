@@ -1,0 +1,3 @@
+# GLM-5.2-FP8 aggregated TP8, 2 nodes / 8 GPUs. No speculative decoding.
+extends: agg-tp-base.yaml
+release: glm-5-2-agg-tp8

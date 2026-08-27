@@ -1,0 +1,56 @@
+# GLM-5.2-FP8 aggregated DEP8 base on GB200 NVL72 (oci-gb200) — DP attention +
+# wide EP MoE across one worker spanning 2x4-GPU nodes. Each DP rank handles
+# attention for its own sequences; MoE layers are expert-parallel across all
+# 8 ranks via real DeepEP all-to-all. Requires DP-aware routing.
+#
+# Same 2-node/8-GPU shape as agg-tp-base.yaml, but the InferenceX GB200
+# GLM-5.2 AgentX recipes never actually run this arm (their aggregated
+# recipe is plain TP8, expert-parallel-size=1) -- these numbers are
+# extrapolated from the equivalent deepseek-v4-ix agg-dep8 shape on the same
+# cluster/GPU count and need real tuning.
+topology: aggregated
+
+model:
+  id: zai-org/GLM-5.2-FP8
+  label: GLM-5.2-FP8
+  # See agg-tp-base.yaml note on image_ref / GLM-5.2 vLLM version requirements.
+  image_ref: vllm.standard
+  served_name: zai-org/GLM-5.2-FP8
+
+routing: {kind: load_aware, target_role: decode}
+runtime: {sidecars: [dcgm-exporter, node-exporter]}
+
+# max_concurrency feeds the deepep_decode fabric profile's NVSHMEM_QP_DEPTH
+# computation (clusters/oci-gb200.yaml); kept equal to max_num_seqs below.
+vars:
+  max_concurrency: 64
+
+roles:
+  - name: decode
+    workload_name: vllm-dep8-agg
+    lws: {size: 2, replicas: 1}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    dp_load_balancing: external
+    env:
+      VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
+      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+      VLLM_USE_DEEP_GEMM: "1"
+    resources:
+      ephemeral_storage: 256Gi
+    vllm:
+      load_format: auto
+      disable_uvicorn_access_log: true
+      trust_remote_code: true
+      moe_backend: deep_gemm
+      kv_cache_dtype: fp8
+      max_model_len: auto
+      disable_access_log_for_endpoints: /health,/metrics
+      reasoning_parser: glm45
+      tool_call_parser: glm47
+      enable_auto_tool_choice: true
+      # Reused from deepseek-v4-ix's own DEP8/2-node aggregated base
+      # (same cluster, same GPU count/topology) as a starting point.
+      gpu_memory_utilization: "0.85"
+      max_num_seqs: 64
+      max_num_batched_tokens: 8192
+      max_cudagraph_capture_size: 64

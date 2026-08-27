@@ -1,0 +1,13 @@
+# GLM-5.2-FP8 aggregated DEP8 with native MTP speculative decoding.
+# 2 nodes / 8 GPUs (DP8 + EP). MTP with 3 speculative tokens -- see
+# agg-tp8-mtp.yaml for the golden acceptance-length citation.
+extends: agg-dep-base.yaml
+release: glm-5-2-agg-dep8-mtp
+
+roles:
+  decode:
+    vllm:
+      max_cudagraph_capture_size: 76
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 3

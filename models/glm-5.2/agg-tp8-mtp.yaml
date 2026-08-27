@@ -1,0 +1,18 @@
+# GLM-5.2-FP8 aggregated TP8 with native MTP speculative decoding.
+# 2 nodes / 8 GPUs (TP8). MTP with 3 speculative tokens, matching the llm-d
+# guide's default (ENABLE_MTP=1, MTP_NUM_TOKENS=3) and the InferenceX golden
+# acceptance-length pin for this checkpoint: glm-5.2-fp8, thinking_on,
+# num_speculative_tokens=3 -> AL 2.99 (SemiAnalysisAI/InferenceX
+# golden_al_distribution/glm5.2_mtp.yaml).
+extends: agg-tp-base.yaml
+release: glm-5-2-agg-tp8-mtp
+
+roles:
+  decode:
+    vllm:
+      # Modest headroom bump for the extra verification-batch activations
+      # (K+1=4 query-tokens/seq); not a proportional 4x scale.
+      max_cudagraph_capture_size: 72
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 3

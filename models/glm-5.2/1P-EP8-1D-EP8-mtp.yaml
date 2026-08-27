@@ -1,0 +1,25 @@
+# 1 prefill DEP8 worker plus 1 decode DEP8 worker, 4 nodes / 16 GPUs, with
+# native MTP speculative decoding on both roles (3 speculative tokens) --
+# see agg-tp8-mtp.yaml for the golden acceptance-length citation.
+extends: disagg-base.yaml
+release: glm-5-2-1p-dep8-1d-dep8-mtp
+
+vars:
+  max_concurrency: 64
+  mtp_size: 4
+
+roles:
+  prefill:
+    lws: {replicas: 1}
+    vllm:
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 3
+  decode:
+    workload_name: vllm-dep8-decode
+    lws: {size: 2}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    vllm:
+      speculative_config:
+        method: mtp
+        num_speculative_tokens: 3

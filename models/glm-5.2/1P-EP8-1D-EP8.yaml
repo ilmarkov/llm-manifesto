@@ -1,0 +1,14 @@
+# 1 prefill DEP8 worker plus 1 decode DEP8 worker, 4 nodes / 16 GPUs.
+extends: disagg-base.yaml
+release: glm-5-2-1p-dep8-1d-dep8
+
+vars:
+  max_concurrency: 64
+
+roles:
+  prefill:
+    lws: {replicas: 1}
+  decode:
+    workload_name: vllm-dep8-decode
+    lws: {size: 2}
+    parallelism: {tp: 1, dp: 8, ep: true}
