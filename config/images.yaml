@@ -22,7 +22,7 @@ vllm:
   # Includes vllm-project/vllm#50869 (reapplied via #52223) and #47808 (DSpark
   # confidence-scheduled verification). First nightly after both landed.
   pinned_nightly_2026-08-14: quay.io/rh-ee-imarkov/vllm-openai:nightly-ac7509e2b1db40fec2f03dde1ed4e9dfdc2338c9
-  pinned_nightly_2026-08-14-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8a102759ba2786dd2813564f1d77029d1c770f73\
+  pinned_nightly_2026-08-14-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-8a102759ba2786dd2813564f1d77029d1c770f73
   pinned_nightly_2026-08-14-fix-v1: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-f6c0c2fe6d0d8a031adc86b3e276a7e466e38e44
   # Base bumped to public nightly-5a4c8d99242e9e069b604d0e9b969e77f7dd501d
   # (2026-08-19), which contains vllm-project/vllm#51538 (SWA-width reshape,
@@ -38,6 +38,9 @@ vllm:
   # see commits 8b908f0319b and f3f11fce1e0).
   pinned_nightly_2026-08-19-fix: quay.io/rh-ee-imarkov/vllm-openai:nightly-fix-f3f11fce1e0cab36832b9323aa03275137a5b924
   nightly_2026-08-12: vllm/vllm-openai:nightly-3ee2df30337a301164c46ae444b76ee67e71c106
+  nightly_2026-09-01: vllm/vllm-openai:nightly-7c5dc571cbd1064ecc8a9b1045637ff647aa22cb
+  pinned_nightly_2026-09-01: quay.io/rh-ee-imarkov/vllm-openai:nightly-7c5dc571cbd1064ecc8a9b1045637ff647aa22cb
+  
   # fixed_nightly: quay.io/rh-ee-imarkov/vllm-openai:a3cea7c214
 
 llm_d:

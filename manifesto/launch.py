@@ -11,6 +11,24 @@ from .parallelism import parallel_layout
 from .spec import DeploymentSpec, DpLoadBalancing, RoleSpec
 
 
+def _uses_offloading_p2p_connector(kv_transfer_config: dict | None) -> bool:
+    """Return True if kv_transfer_config contains an OffloadingConnector with a P2P secondary tier."""
+    if not kv_transfer_config:
+        return False
+    # Check for direct OffloadingConnector
+    if kv_transfer_config.get("kv_connector") == "OffloadingConnector":
+        tiers = kv_transfer_config.get("kv_connector_extra_config", {}).get("secondary_tiers", [])
+        if any(t.get("type") == "p2p" for t in tiers):
+            return True
+    # Check for OffloadingConnector nested in MultiConnector
+    for conn in kv_transfer_config.get("kv_connector_extra_config", {}).get("connectors", []):
+        if conn.get("kv_connector") == "OffloadingConnector":
+            tiers = conn.get("kv_connector_extra_config", {}).get("secondary_tiers", [])
+            if any(t.get("type") == "p2p" for t in tiers):
+                return True
+    return False
+
+
 def _flag_name(name: str) -> str:
     if "." in name:
         return "--" + name
@@ -94,6 +112,13 @@ def build_launch_script(
     else:
         lines += ["DP_SIZE_LOCAL=1", "START_RANK=0"]
 
+    if role.p2p_config:
+        # Same per-rank compensation as KV_EVENTS_BASE: vLLM offsets by the
+        # global dp rank, so subtract START_RANK so every pod exposes the same
+        # fixed local port range  port..port+DP_SIZE_LOCAL-1  (e.g. 7777-7780).
+        p2p_port = role.p2p_config.get("port", 7777)
+        lines.append(f"P2P_BASE=$(( {p2p_port} - START_RANK ))")
+
     multi_node_tp = layout.tp_world_size > layout.tp_local_size
     if multi_node_tp:
         lines += [
@@ -144,7 +169,22 @@ def build_launch_script(
             ["--data-parallel-rpc-port", "5555"],
         ]
     if role.kv_transfer_config:
-        base_args.append(["--kv_transfer_config", shlex.quote(json.dumps(role.kv_transfer_config, separators=(",", ":")))])
+        if role.p2p_config and _uses_offloading_p2p_connector(role.kv_transfer_config):
+            # Build the kv_transfer_config JSON at pod startup so that
+            # __POD_IP__ / __P2P_PORT__ sentinels are substituted with the
+            # actual pod IP and compensated P2P port base (both known only at
+            # runtime).  Uses the same double-quoted printf pattern as the
+            # kv_events_config below: inner JSON double-quotes are escaped as
+            # \" so they survive the outer shell double-quote context while
+            # ${POD_IP} / ${P2P_BASE} are still expanded by the shell.
+            cfg_json = json.dumps(role.kv_transfer_config, separators=(",", ":"))
+            cfg_json = cfg_json.replace('"__POD_IP__"', '"${POD_IP}"')
+            cfg_json = cfg_json.replace('"__P2P_PORT__"', "${P2P_BASE}")
+            cfg_shell = cfg_json.replace('"', '\\"')
+            lines.append(f'KV_TRANSFER_CONFIG=$(printf \'%s\' "{cfg_shell}")')
+            base_args.append(["--kv_transfer_config", '"$KV_TRANSFER_CONFIG"'])
+        else:
+            base_args.append(["--kv_transfer_config", shlex.quote(json.dumps(role.kv_transfer_config, separators=(",", ":")))])
     if spec.model.served_name:
         base_args.append(["--served-model-name", shlex.quote(spec.model.served_name)])
     for name, value in (vllm_args or role.vllm_args).items():

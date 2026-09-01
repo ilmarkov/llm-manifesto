@@ -293,6 +293,16 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
     ]
     if external_dp:
         container_ports.insert(0, {"containerPort": 8100, "name": "dp-supervisor", "protocol": "TCP"})
+    if role.p2p_config:
+        # Same fixed local range logic as KV_EVENTS -- see P2P_BASE comment in
+        # launch.py.  Every pod in the LWS exposes the same port range because
+        # P2P_BASE already compensates for START_RANK.
+        p2p_port = role.p2p_config.get("port", 7777)
+        local_size = parallel_layout(role).dp_local_size if role.parallelism.dp_enabled else 1
+        container_ports.extend(
+            {"containerPort": p2p_port + idx, "name": f"p2p-{idx}", "protocol": "TCP"}
+            for idx in range(local_size)
+        )
     readiness_ports = resolved.ports.public if role.routing_proxy else resolved.ports.backend
 
     init_containers = []
@@ -347,6 +357,11 @@ def render_workload(spec: DeploymentSpec, instance: Instance, cluster: Cluster, 
         container_env.append(
             field_ref_env("VLLM_NIXL_SIDE_CHANNEL_HOST", "status.podIP")
         )
+    if role.p2p_config:
+        if "POD_IP" not in resolved.env:
+            container_env.append(field_ref_env("POD_IP", "status.podIP"))
+        if "VLLM_P2P_SIDE_CHANNEL_HOST" not in resolved.env:
+            container_env.append(field_ref_env("VLLM_P2P_SIDE_CHANNEL_HOST", "status.podIP"))
     if spec.mooncake.enabled:
         container_env.append({"name": "MOONCAKE_CONFIG_PATH", "value": "/etc/mooncake/mooncake_config.json"})
     uses_mooncake_client_sidecar = (
