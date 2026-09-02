@@ -304,7 +304,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                 },
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
-                {"type": "weighted-random-picker"},
+                {"type": "max-score-picker", "name": "default-picker"},
             ],
             "schedulingProfiles": [
                 {
@@ -315,7 +315,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                         {"pluginRef": "token-load-scorer", "weight": 3},
                         {"pluginRef": "queue-scorer", "weight": 3},
                         {"pluginRef": "active-request-scorer", "weight": 3},
-                        {"pluginRef": "weighted-random-picker"},
+                        {"pluginRef": "default-picker"},
                     ],
                 }
             ],
