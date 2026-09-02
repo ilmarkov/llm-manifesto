@@ -92,7 +92,7 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "type": "approx-prefix-cache-producer",
                     "parameters": {
                         "autoTune": False,
-                        "blockSizeTokens": 256,
+                        "blockSizeTokens": 64,
                         "maxPrefixTokensToMatch": 1048576,
                         "maxPrefixBlocksToMatch": 4096,
                         "lruCapacityPerServer": 45272,
@@ -273,18 +273,35 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
             "kind": "EndpointPickerConfig",
             "plugins": [
                 {
+                    # Required explicitly: token-load-scorer consumes both
+                    # InFlightLoadDataKey and UncachedRequestTokensDataKey; see
+                    # PD block comment above.
+                    "type": "inflight-load-producer",
+                },
+                {
+                    # GLM-5.2 MLA sparse (FLASHINFER_MLA_SPARSE) uses 64-token
+                    # prefix-cache blocks; must match vllm --block-size.
+                    # lruCapacityPerServer: llm-d GLM-5.2 router override
+                    # starting point (200k blocks/rank); re-derive from live
+                    # logs once cpu_bytes_to_use / gpu-memory-utilization settle.
                     "type": "approx-prefix-cache-producer",
                     "parameters": {
-                        "blockSizeTokens": 256,
+                        "autoTune": False,
+                        "blockSizeTokens": 64,
                         "maxPrefixTokensToMatch": 1048576,
                         "maxPrefixBlocksToMatch": 4096,
+                        "lruCapacityPerServer": 200000,
                     },
                 },
                 {
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 80000},
+                    "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
                 },
                 {"type": "prefix-cache-scorer"},
+                {
+                    "type": "token-load-scorer",
+                    "parameters": {"queueThresholdTokens": 3000000},
+                },
                 {"type": "active-request-scorer"},
                 {"type": "queue-scorer"},
                 {"type": "weighted-random-picker"},
@@ -294,9 +311,10 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     "name": "default",
                     "plugins": [
                         {"pluginRef": "prefix-cache-affinity-filter"},
-                        {"pluginRef": "prefix-cache-scorer", "weight": 10},
-                        {"pluginRef": "active-request-scorer", "weight": 2},
-                        {"pluginRef": "queue-scorer", "weight": 2},
+                        {"pluginRef": "prefix-cache-scorer", "weight": 6},
+                        {"pluginRef": "token-load-scorer", "weight": 3},
+                        {"pluginRef": "queue-scorer", "weight": 3},
+                        {"pluginRef": "active-request-scorer", "weight": 3},
                         {"pluginRef": "weighted-random-picker"},
                     ],
                 }
