@@ -5,7 +5,7 @@
 # num_speculative_tokens=3 -> AL 2.99 (SemiAnalysisAI/InferenceX
 # golden_al_distribution/glm5.2_mtp.yaml).
 extends: agg-tp-base.yaml
-release: glm-5-2-agg-tp8-mtp
+release: glm-5-2-nvfp4-agg-tp8-mtp
 
 roles:
   decode:

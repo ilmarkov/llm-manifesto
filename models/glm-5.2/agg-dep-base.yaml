@@ -11,11 +11,11 @@
 topology: aggregated
 
 model:
-  id: zai-org/GLM-5.2-FP8
-  label: GLM-5.2-FP8
-  # See agg-tp-base.yaml note on image_ref / GLM-5.2 vLLM version requirements.
-  image_ref: vllm.standard
-  served_name: zai-org/GLM-5.2-FP8
+  id: RedHatAI/GLM-5.2-NVFP4-FP8
+  label: GLM-5.2-NVFP4-FP8
+  # OffloadingConnector/TieringOffloadingSpec require a recent vLLM build.
+  image_ref: vllm.pinned_nightly_2026-09-01
+  served_name: RedHatAI/GLM-5.2-NVFP4-FP8
 
 routing: {kind: load_aware, target_role: decode}
 runtime: {sidecars: [dcgm-exporter, node-exporter]}
@@ -31,26 +31,60 @@ roles:
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 1, dp: 8, ep: true}
     dp_load_balancing: external
+
+    kv_transfer_config:
+      kv_connector: OffloadingConnector
+      kv_role: kv_both
+      kv_connector_extra_config:
+        spec_name: TieringOffloadingSpec
+        cpu_bytes_to_use: 107374182400
+        eviction_policy: lru
+        offload_prompt_only: true
+        # self_describing_kv_events: true
+        secondary_tiers:
+          - type: p2p
+            host: "__POD_IP__"
+            port: "__P2P_PORT__"
+            backends: ["UCX"]
+            num_threads: 4
+    p2p_config: {port: 7777}
+    shm_size: 450Gi
+
     env:
+      KV_OFFLOAD_CPU_BYTES: "107374182400"
       VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
       VLLM_USE_DEEP_GEMM: "1"
+      VLLM_USE_NCCL_SYMM_MEM: "1"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_RPC_TIMEOUT: "600000"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      DG_JIT_CACHE_DIR: /tmp/dg-cache-glm-5-2-fp8-dep
+      UCX_TLS: cuda_copy,cuda_ipc
+      UCX_CUDA_IPC_ENABLE_MNNVL: "y"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      VLLM_PREFIX_CACHE_RETENTION_INTERVAL: "0"
+
     resources:
       ephemeral_storage: 256Gi
     vllm:
       load_format: auto
       disable_uvicorn_access_log: true
       trust_remote_code: true
-      moe_backend: deep_gemm
+      moe_backend: deep_gemm_mega_moe
       kv_cache_dtype: fp8
       max_model_len: auto
       disable_access_log_for_endpoints: /health,/metrics
       reasoning_parser: glm45
       tool_call_parser: glm47
       enable_auto_tool_choice: true
+      numa_bind: true
       # Reused from deepseek-v4-ix's own DEP8/2-node aggregated base
       # (same cluster, same GPU count/topology) as a starting point.
       gpu_memory_utilization: "0.85"
+      block_size: 64
       max_num_seqs: 64
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 64
+      kv_cache_metrics: true

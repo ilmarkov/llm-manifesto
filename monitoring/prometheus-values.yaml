@@ -11,6 +11,35 @@ server:
             values: ["amd64"]
 
 extraScrapeConfigs: |
+  - job_name: 'vllm-aggregate'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names:
+            - vllm
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_llm_d_ai_role]
+        regex: decode
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_name]
+        regex: vllm
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: '(8000|820.)'
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+      - source_labels: [__meta_kubernetes_pod_label_llm_d_ai_model]
+        target_label: model
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: '820(.)'
+        target_label: rank
+        replacement: '${1}'
+    scrape_interval: 1s
+    metrics_path: /metrics
+
   - job_name: 'vllm-decode'
     kubernetes_sd_configs:
       - role: pod
@@ -25,7 +54,7 @@ extraScrapeConfigs: |
         regex: vllm
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: '820.'
+        regex: '(8000|820.)'
         action: keep
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod

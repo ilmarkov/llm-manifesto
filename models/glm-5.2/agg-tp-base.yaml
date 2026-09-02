@@ -12,13 +12,16 @@
 topology: aggregated
 
 model:
-  id: zai-org/GLM-5.2-FP8
-  label: GLM-5.2-FP8
+  # id: zai-org/GLM-5.2-FP8
+  # label: GLM-5.2-FP8
+  id: RedHatAI/GLM-5.2-NVFP4-FP8
+  label: GLM-5.2-NVFP4-FP8
   # Guide requires a vLLM build with GLM-5.2 support (glm45/glm47 parsers,
   # vllm-project/vllm#44244); vllm.standard (v0.26.0) should cover this but
   # bump to a newer pin if GLM-5.2 loading fails.
-  image_ref: vllm.pinned_nightly_2026-08-14
-  served_name: zai-org/GLM-5.2-FP8
+  image_ref: vllm.pinned_nightly_2026-09-01
+  # served_name: zai-org/GLM-5.2-FP8
+  served_name: RedHatAI/GLM-5.2-NVFP4-FP8
 
 routing: {kind: load_aware, target_role: decode}
 runtime: {sidecars: [dcgm-exporter, node-exporter]}
@@ -28,22 +31,40 @@ roles:
     workload_name: vllm-tp8-agg
     lws: {size: 2, replicas: 1}
     parallelism: {tp: 8, dp: false, ep: false}
+    fabric_profile: megamoe
+
+    kv_transfer_config:
+      kv_connector: OffloadingConnector
+      kv_role: kv_both
+      kv_connector_extra_config:
+        spec_name: CPUOffloadingSpec
+        cpu_bytes_to_use: 429496729600
+        eviction_policy: lru
+        store_threshold: 2
+        offload_prompt_only: true
+    shm_size: 440Gi
+
     env:
+      KV_OFFLOAD_CPU_BYTES: "429496729600"
       VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
+      VLLM_USE_NCCL_SYMM_MEM: "0"
+      VLLM_ALLREDUCE_USE_SYMM_MEM: "0"
+      VLLM_ALLREDUCE_USE_FLASHINFER: "1"
+      VLLM_FLASHINFER_ALLREDUCE_BACKEND: "auto"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_RPC_TIMEOUT: "600000"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
       TILELANG_CLEANUP_TEMP_FILES: "1"
       DG_JIT_CACHE_DIR: /tmp/dg-cache-glm-5-2-fp8-agg
-      UCX_MEMTYPE_REG_WHOLE: "n"
-      UCX_RCACHE_MAX_UNRELEASED: "1024"
-      UCX_TLS: cuda_copy,cuda_ipc,tcp
-      UCX_CUDA_IPC_ENABLE_MNNVL: "y"
-      NCCL_P2P_LEVEL: NVL
 
     resources:
+      memory: 640Gi
       ephemeral_storage: 256Gi
     vllm:
       load_format: auto
       disable_uvicorn_access_log: true
+      disable_custom_all_reduce: true
       trust_remote_code: true
       kv_cache_dtype: fp8
       max_model_len: auto
@@ -58,3 +79,5 @@ roles:
       max_num_seqs: 16
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 16
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
+

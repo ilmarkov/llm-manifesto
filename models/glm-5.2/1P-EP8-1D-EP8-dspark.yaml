@@ -1,0 +1,77 @@
+# 1 prefill DEP8 worker plus 1 decode DEP8 worker, 4 nodes / 16 GPUs, with
+# dspark speculative decoding on both roles (3 speculative tokens).
+extends: disagg-base.yaml
+release: glm-5-2-1p-dep8-1d-dep8-dspark
+
+vars:
+  max_concurrency: 64
+
+roles:
+  prefill:
+    lws: {replicas: 1}
+    pre_launch:
+      - |
+        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+        BACKENDS=/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends
+        MLA=$BACKENDS/mla
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        for f in flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+          test -f "$PATCH_DIR/$f"
+        done
+        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer.py" "$BACKENDS/flashinfer.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer_mla.py" "$MLA/flashinfer_mla.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer_mla_sparse.py" "$MLA/flashinfer_mla_sparse.py"
+        echo "DSPARK PATCH: installed allreduce + v1 backend fixes from $PATCH_DIR" >&2
+      - |
+        KVCONN=/usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        test -f "$PATCH_DIR/multi_connector.py"
+        cp "$PATCH_DIR/multi_connector.py" "$KVCONN/multi_connector.py"
+        echo "MULTICONNECTOR PATCH: installed longest-match connector selection from $PATCH_DIR" >&2
+    vllm:
+      max_num_seqs: 16
+      speculative_config:
+        method: dspark
+        model: "RedHatAI/GLM-5.2-speculator.dspark"
+        num_speculative_tokens: 1
+        draft_sample_method: probabilistic
+        enable_adaptive_verification: true
+  decode:
+    workload_name: vllm-dep8-decode-dspark
+    lws: {size: 2}
+    parallelism: {tp: 1, dp: 8, ep: true}
+    pre_launch:
+      - |
+        DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
+        FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
+        BACKENDS=/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends
+        MLA=$BACKENDS/mla
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        for f in flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
+          test -f "$PATCH_DIR/$f"
+        done
+        cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
+        cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer.py" "$BACKENDS/flashinfer.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer_mla.py" "$MLA/flashinfer_mla.py"
+        cp "$PATCH_DIR/v1_backends/flashinfer_mla_sparse.py" "$MLA/flashinfer_mla_sparse.py"
+        echo "DSPARK PATCH: installed allreduce + v1 backend fixes from $PATCH_DIR" >&2
+      - |
+        KVCONN=/usr/local/lib/python3.12/dist-packages/vllm/distributed/kv_transfer/kv_connector/v1
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
+        test -f "$PATCH_DIR/multi_connector.py"
+        cp "$PATCH_DIR/multi_connector.py" "$KVCONN/multi_connector.py"
+        echo "MULTICONNECTOR PATCH: installed longest-match connector selection from $PATCH_DIR" >&2
+    vllm:
+      max_num_seqs: 32
+      max_num_batched_tokens: 256
+      max_cudagraph_capture_size: 128
+      speculative_config:
+        method: dspark
+        model: "RedHatAI/GLM-5.2-speculator.dspark"
+        num_speculative_tokens: 3
+        draft_sample_method: probabilistic
+        enable_adaptive_verification: true
