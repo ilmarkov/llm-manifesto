@@ -72,10 +72,7 @@ roles:
       reasoning_parser: glm45
       tool_call_parser: glm47
       enable_auto_tool_choice: true
-      # Starting point only: InferenceX's real GB200 TP8 agg recipe runs at
-      # max-running-requests=10/cuda-graph-max-bs=10 (NVFP4, no MTP); these
-      # are rounded up slightly for the FP8 checkpoint and need tuning.
-      gpu_memory_utilization: "0.85"
+      gpu_memory_utilization: "0.9"
       max_num_seqs: 16
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 16
