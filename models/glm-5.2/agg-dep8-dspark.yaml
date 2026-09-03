@@ -5,22 +5,22 @@ release: glm-5-2-agg-dep8-dspark
 
 roles:
   decode:
-    # pre_launch:
-    #   - |
-    #     DIST=/usr/local/lib/python3.12/dist-packages/vllm/distributed/device_communicators
-    #     FUSED=/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers
-    #     BACKENDS=/usr/local/lib/python3.12/dist-packages/vllm/v1/attention/backends
-    #     MLA=$BACKENDS/mla
-    #     PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches"
-    #     for f in flashinfer_all_reduce.py fused_allreduce_gemma_rms_norm.py; do
-    #       test -f "$PATCH_DIR/$f"
-    #     done
-    #     cp "$PATCH_DIR/flashinfer_all_reduce.py" "$DIST/flashinfer_all_reduce.py"
-    #     cp "$PATCH_DIR/fused_allreduce_gemma_rms_norm.py" "$FUSED/fused_allreduce_gemma_rms_norm.py"
-    #     cp "$PATCH_DIR/v1_backends/flashinfer.py" "$BACKENDS/flashinfer.py"
-    #     cp "$PATCH_DIR/v1_backends/flashinfer_mla.py" "$MLA/flashinfer_mla.py"
-    #     cp "$PATCH_DIR/v1_backends/flashinfer_mla_sparse.py" "$MLA/flashinfer_mla_sparse.py"
-    #     echo "DSPARK PATCH: installed allreduce + v1 backend fixes from $PATCH_DIR" >&2
+    pre_launch:
+      - |
+        WORKER=/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu
+        PATCH_DIR="$(dirname "$(dirname "$LOG_DIR")")/dspark_patches/v1_worker/gpu"
+        for f in \
+          dp_utils.py \
+          spec_decode/speculator.py \
+          spec_decode/dflash/speculator.py \
+          spec_decode/autoregressive/speculator.py; do
+          test -f "$PATCH_DIR/$f"
+        done
+        cp "$PATCH_DIR/dp_utils.py" "$WORKER/dp_utils.py"
+        cp "$PATCH_DIR/spec_decode/speculator.py" "$WORKER/spec_decode/speculator.py"
+        cp "$PATCH_DIR/spec_decode/dflash/speculator.py" "$WORKER/spec_decode/dflash/speculator.py"
+        cp "$PATCH_DIR/spec_decode/autoregressive/speculator.py" "$WORKER/spec_decode/autoregressive/speculator.py"
+        echo "PR54856 PATCH: installed DEP8 DSpark uniform-batch DP sync reuse from $PATCH_DIR" >&2
     vllm:
       max_cudagraph_capture_size: 192
       speculative_config:
