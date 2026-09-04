@@ -1,7 +1,8 @@
 # 1 prefill DEP8 worker plus 1 decode DEP8 worker, 4 nodes / 16 GPUs, with
 # dspark speculative decoding on both roles (3 speculative tokens).
 extends: disagg-base.yaml
-release: glm-5-2-1p-dep8-1d-dep8-dspark
+release: glm-5-2-1p-dep8-1d-dep16-dspark
+
 
 roles:
   prefill:
@@ -33,8 +34,6 @@ roles:
         attention_backend: "FLASH_ATTN"
   decode:
     workload_name: vllm-dep8-decode-dspark
-    lws: {size: 2}
-    parallelism: {tp: 1, dp: 8, ep: true}
     pre_launch:
       - |
         WORKER=/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu
@@ -53,8 +52,8 @@ roles:
         echo "PR54856 PATCH: installed DEP8 DSpark uniform-batch DP sync reuse from $PATCH_DIR" >&2
     vllm:
       max_num_seqs: 32
-      max_num_batched_tokens: 256
-      max_cudagraph_capture_size: 256
+      max_num_batched_tokens: 128
+      max_cudagraph_capture_size: 128
       speculative_config:
         method: dspark
         model: "RedHatAI/GLM-5.2-speculator.dspark"

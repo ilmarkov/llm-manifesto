@@ -71,22 +71,20 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     # reads num_gpu_blocks -- it has no concept of CPU-offloaded
                     # capacity, so it would still only model the GPU tier.
                     #
-                    # lruCapacityPerServer derived from live prefill logs
-                    # (ilmarkov-vllm-ep8-prefill-dspark-0, gpu-memory-utilization
-                    # 0.97, --block-size 256):
-                    #   GPU KV cache:  3,089,495 tokens/rank (kv_cache_utils.py log,
-                    #     unchanged since gpu-memory-utilization didn't change)
-                    #   CPU offload:  33,204 blocks x 256 tok/block = 8,500,224
-                    #     tokens/rank (SimpleCPUOffloadConnector, cpu_bytes_to_use=
-                    #     40802189312 = 38 GiB/rank as of the 2026-08-21 mooncake/
-                    #     cpu-offload rebalance -- down from 40 GiB/34,952 blocks;
-                    #     confirmed live via worker.py:208 "33204 CPU blocks (38.00 GB)")
-                    #   combined:     11,589,719 tokens/rank -> /256 ~= 45,272 blocks
-                    # Mooncake (also configured, enable_offload=false) excluded --
-                    # it's an external/read-only tier for this pod, not local
-                    # retention. Decode has no CPU-offload connector at all, but
-                    # the decode profile doesn't consume prefix-cache-affinity-filter
-                    # /prefix-cache-scorer, so this value only matters for prefill.
+                    # lruCapacityPerServer derived from live GLM-5.2 GB200
+                    # disagg prefill logs (ilmarkov-2-vllm-dep8-prefill-0,
+                    # gpu-memory-utilization 0.92, --block-size 64,
+                    # cpu_bytes_to_use 107374182400 = 100 GiB/rank):
+                    #   GPU KV cache:  1,215,680 tokens/rank (kv_cache_utils.py)
+                    #   GPU blocks:    23,076/rank (TieringOffloadingManager
+                    #     primary tier, spec.py)
+                    #   CPU offload:   ~28,199 blocks/rank (100 GiB mmap /
+                    #     ~3.8 MiB per block from Available KV cache memory)
+                    #   combined:      51,275 blocks/rank at blockSizeTokens 64
+                    # Prior dsv4-pro ix value was 45,272 at block_size 256.
+                    # P2P secondary tier excluded -- external/read-only for
+                    # prefix-cache LRU modeling, same as Mooncake on dsv4.
+                    # Decode profile doesn't consume approx-prefix-cache-producer.
                     # Re-derive if gpu-memory-utilization, cpu_bytes_to_use, or
                     # --block-size change.
                     "type": "approx-prefix-cache-producer",
@@ -95,54 +93,34 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                         "blockSizeTokens": 64,
                         "maxPrefixTokensToMatch": 1048576,
                         "maxPrefixBlocksToMatch": 4096,
-                        "lruCapacityPerServer": 45272,
+                        "lruCapacityPerServer": 51275,
                     },
                 },
                 {
                     #
-                    # peakPrefillThroughput re-calibrated with
-                    # llm-d's official recipe (guides/recipes/router/
-                    # calibration/calibrate.sh) run against this exact live
-                    # deployment: sequential 8192-token (= our prefill
-                    # max_num_batched_tokens) random-token-ID requests via the
-                    # real gateway path, guaranteed cache miss, median TTFT
-                    # 1.7124s -> 4783 tok/s. The old 200000 (and v6's 80000)
-                    # were both derived from active_prefill_throughput, an
-                    # *aggregate concurrent-batched* metric -- a fundamentally
-                    # different regime from this plugin's intended semantics
-                    # (single in-flight request draining a backlog). The
-                    # calibrated value is ~15-40x lower than either prior
-                    # guess. Re-run calibrate.sh if max_num_batched_tokens or
+                    # peakPrefillThroughput calibrated 2026-09-04 on GLM-5.2
+                    # NVFP4-FP8 GB200 disagg prefill (ilmarkov-2 1P1D DEP8):
+                    # llm-d calibrate.sh recipe -- 7 sequential 8192-token
+                    # random-token-ID cache-miss requests hit directly on
+                    # prefill DP0 (:8000), median TTFT 6.8968s -> 1200 tok/s
+                    # (requests 1-6 tight at 6.4-7.0s; req 7 outlier under
+                    # concurrent aiperf load). Prior dsv4-pro ix value was
+                    # 4783 tok/s (median TTFT 1.7124s, same recipe via
+                    # gateway). Re-run if max_num_batched_tokens, model, or
                     # hardware changes.
                     #
-                    # maxTTFTPenaltyMs re-derived from live gate
-                    # telemetry: ran a 900s c192 benchmark against this exact
-                    # deployment with EPP at -v=4 and captured every
-                    # PrefixCacheAffinityFilter decision via continuous
-                    # `kubectl logs -f` (retroactive `kubectl logs --since`
-                    # doesn't work here -- at -v=4 the pod emits ~270
-                    # lines/sec and container log rotation evicts anything
-                    # older than a few minutes). Across 11,767 prefill
-                    # scheduling decisions: 15.7% had no sticky candidate,
-                    # 24.2% held stickiness, and 60.1% broke it via the TTFT
-                    # load gate at the plugin's default 5000ms -- i.e. cache
-                    # affinity was actually honored only ~1 in 4 times.
-                    # Penalty-when-broken distribution: median 17.4s over
-                    # budget, p75 26.1s, p90 36.0s, p99 202s (max 527s).
-                    # Recomputed breaking rate at higher thresholds: 15000ms
-                    # -> 42.1%, 25000ms -> 19.5%, 30000ms -> 12.6%, 40000ms
-                    # -> 5.0%, 60000ms -> 1.9%. Picked 30000ms to keep the
-                    # gate as a safety valve for genuinely severe (p75+)
-                    # imbalances while letting affinity hold for the routine
-                    # variance that was previously discarding it most of the
-                    # time. When gate held, avg sticky candidates was 1.009
-                    # of 8 -- each conversation really does have one clear
-                    # home rank, so honoring stickiness is high-value here.
-                    # Re-capture live telemetry (same method) if
-                    # peakPrefillThroughput or the affinity/load-scoring mix
-                    # changes materially.
+                    # maxTTFTPenaltyMs 60000 (60s): τ = 1200 * 60000 / 1000
+                    # = 72k uncached in-flight tokens (~8.8 * 8192 batched-
+                    # token chunks). Chosen as a middle ground between keeping
+                    # the old dsv4 τ (~143k at 4783/30000) and the aggressive
+                    # 36k τ that 1200/30000 would have implied. Prior dsv4
+                    # value 30000ms came from live PrefixCacheAffinityFilter
+                    # telemetry (c192, -v=4): 12.6% stickiness breaks at
+                    # 30s vs 60.1% at the plugin default 5s. Re-capture EPP
+                    # affinity-filter telemetry after deploy if gate behavior
+                    # looks off.
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
+                    "parameters": {"peakPrefillThroughput": 1200, "maxTTFTPenaltyMs": 60000},
                 },
                 {
                     # Re-added 2026-08-21 after v9 regressed hard vs v7
@@ -160,8 +138,8 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     # alone). Token-load spread across candidates in those
                     # non-narrowed decisions: median 213k, p90 625k tokens --
                     # both above the current gate's break threshold
-                    # (maxTTFTPenaltyMs 30000 * peakPrefillThroughput 4783 /
-                    # 1000 = ~143k tokens), confirming the gate is firing
+                    # (maxTTFTPenaltyMs 60000 * peakPrefillThroughput 1200 /
+                    # 1000 = ~72k tokens), confirming the gate is firing
                     # well inside ambient load variance, not just on extreme
                     # imbalances. So most decisions were being made by
                     # token-load-scorer alone, with no partial-cache-match
@@ -294,8 +272,10 @@ def _plugin_config(routing: RoutingSpec, *, dp_enabled: bool = False) -> str:
                     },
                 },
                 {
+                    # Same peakPrefillThroughput / maxTTFTPenaltyMs as PD block;
+                    # see prefix-cache-affinity-filter comment there.
                     "type": "prefix-cache-affinity-filter",
-                    "parameters": {"peakPrefillThroughput": 4783, "maxTTFTPenaltyMs": 30000},
+                    "parameters": {"peakPrefillThroughput": 1200, "maxTTFTPenaltyMs": 60000},
                 },
                 {"type": "prefix-cache-scorer"},
                 {

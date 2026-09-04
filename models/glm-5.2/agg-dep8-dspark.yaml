@@ -1,7 +1,7 @@
 # GLM-5.2-FP8 aggregated DEP8 with dspark speculative decoding.
 # 2 nodes / 8 GPUs (DP8 + EP).
 extends: agg-dep-base.yaml
-release: glm-5-2-agg-dep8-dspark
+release: glm-5-2-agg-dep8-dspark-deepep
 
 roles:
   decode:

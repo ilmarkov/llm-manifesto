@@ -67,7 +67,7 @@ roles:
       disable_custom_all_reduce: true
       trust_remote_code: true
       kv_cache_dtype: fp8
-      max_model_len: auto
+      max_model_len: 1048576
       disable_access_log_for_endpoints: /health,/metrics
       reasoning_parser: glm45
       tool_call_parser: glm47
@@ -76,5 +76,6 @@ roles:
       max_num_seqs: 16
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 16
+      kv_cache_metrics: true
       compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
 

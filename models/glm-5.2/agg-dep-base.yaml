@@ -35,23 +35,24 @@ roles:
     dp_load_balancing: external
     fabric_profile: megamoe
 
-    # kv_transfer_config:
-    #   kv_connector: OffloadingConnector
-    #   kv_role: kv_both
-    #   kv_connector_extra_config:
-    #     spec_name: TieringOffloadingSpec
-    #     cpu_bytes_to_use: 107374182400
-    #     eviction_policy: lru
-    #     offload_prompt_only: true
-    #     # self_describing_kv_events: true
-    #     secondary_tiers:
-    #       - type: p2p
-    #         host: "__POD_IP__"
-    #         port: "__P2P_PORT__"
-    #         backends: ["UCX"]
-    #         num_threads: 4
-    # p2p_config: {port: 7777}
-    # shm_size: 450Gi
+    kv_transfer_config:
+      kv_connector: OffloadingConnector
+      kv_role: kv_both
+      kv_connector_extra_config:
+        spec_name: TieringOffloadingSpec
+        cpu_bytes_to_use: 107374182400  # 100 GiB/rank; 4 ranks/pod = 400 GiB mmap
+        eviction_policy: lru
+        offload_prompt_only: true
+        # self_describing_kv_events: true
+        secondary_tiers:
+          - type: p2p
+            host: "__POD_IP__"
+            port: "__P2P_PORT__"
+            backends: ["UCX"]
+            num_threads: 4
+    p2p_config: {port: 7777}
+    # 100 GiB/rank x 4 = 400 GiB mmap; 640Gi shm leaves headroom for UCX/NCCL.
+    shm_size: 640Gi
 
     env:
       VLLM_USE_RUST_FRONTEND: "1"
@@ -73,6 +74,7 @@ roles:
       # VLLM_LOGGING_LEVEL: "DEBUG"
 
     resources:
+      memory: 800Gi
       ephemeral_storage: 256Gi
     vllm:
       load_format: auto
@@ -82,6 +84,7 @@ roles:
       enable_ep_weight_filter: true
       # moe_backend: deep_gemm
       # all2all_backend: flashinfer_nvlink_one_sided
+      all2all_backend: deepep_v2
       kv_cache_dtype: fp8
       max_model_len: auto
       disable_access_log_for_endpoints: /health,/metrics
@@ -91,10 +94,11 @@ roles:
       numa_bind: true
       # Reused from deepseek-v4-ix's own DEP8/2-node aggregated base
       # (same cluster, same GPU count/topology) as a starting point.
-      gpu_memory_utilization: "0.85"
+      gpu_memory_utilization: "0.87"
       block_size: 64
       max_num_seqs: 64
       max_num_batched_tokens: 8192
       max_cudagraph_capture_size: 64
       compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
       kv_cache_metrics: true
+      kv_cache_metrics_sample: 0.25

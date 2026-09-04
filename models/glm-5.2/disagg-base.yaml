@@ -2,7 +2,9 @@
 # (2x4-GPU nodes) + decode DEP16 (4x4-GPU nodes), 6 nodes / 24 GPU per replica
 # pair. Routing follows the same `pd` kind used for dsv4-pro (prefix-cache
 # affinity + prefix-cache scoring on the decode pool; see
-# manifesto/render/routing.py) -- no model-specific routing plugin needed.
+# manifesto/render/routing.py). GLM-5.2 GB200 affinity-gate calibration
+# (peakPrefillThroughput / maxTTFTPenaltyMs) lives in routing.py; optional
+# per-spec override below.
 #
 # Topology and per-role parallelism directly mirror InferenceX's own
 # validated GB200 GLM-5.2 AgentX recipe (SemiAnalysisAI/InferenceX
@@ -17,13 +19,34 @@
 topology: pd
 
 model:
-  id: zai-org/GLM-5.2-FP8
-  label: GLM-5.2-FP8
-  # See agg-tp-base.yaml note on image_ref / GLM-5.2 vLLM version requirements.
-  image_ref: vllm.standard
-  served_name: zai-org/GLM-5.2-FP8
+  id: RedHatAI/GLM-5.2-NVFP4-FP8
+  label: GLM-5.2-NVFP4-FP8
+  # OffloadingConnector/TieringOffloadingSpec require a recent vLLM build.
+  image_ref: vllm.pinned_nightly_2026-09-01
+  served_name: RedHatAI/GLM-5.2-NVFP4-FP8
 
-routing: {kind: pd, target_role: decode}
+routing:
+  kind: pd
+  target_role: decode
+  # plugin_config: uncomment to bypass routing.py PD defaults entirely (must be
+  # a complete EndpointPickerConfig -- copy plugins/schedulingProfiles from
+  # manifesto/render/routing.py and patch as needed).
+  #
+  # GLM-5.2 GB200 calibrated 2026-09-04 (ilmarkov-2 1P1D DEP8 prefill):
+  #   peakPrefillThroughput: 1200  (8192-token cache-miss median TTFT 6.9s)
+  #   maxTTFTPenaltyMs: 60000      (τ ≈ 72k uncached in-flight tokens)
+  #   lruCapacityPerServer: 51275   (23,076 GPU + ~28,199 CPU blocks/rank @ 64)
+  # plugin_config:
+  #   apiVersion: llm-d.ai/v1alpha1
+  #   kind: EndpointPickerConfig
+  #   plugins:
+  #   - type: approx-prefix-cache-producer
+  #     parameters:
+  #       lruCapacityPerServer: 51275
+  #   - type: prefix-cache-affinity-filter
+  #     parameters:
+  #       peakPrefillThroughput: 1200
+  #       maxTTFTPenaltyMs: 60000
 runtime: {sidecars: [dcgm-exporter, node-exporter]}
 
 # max_concurrency follows the guide's own derivation (MAX_TOKENS_PER_NODE=32
@@ -45,25 +68,38 @@ roles:
       kv_role: kv_both
       kv_buffer_device: cuda
       kv_load_failure_policy: fail
-    computed:
-      env: {MAX_TOKENS: max_concurrency}
-      vllm:
-        max_num_batched_tokens: max_concurrency * mtp_size
-        max_num_seqs: max_concurrency
-        max_cudagraph_capture_size: max_concurrency
     env:
+      PYTHONHASHSEED: "0"
+      VLLM_USE_RUST_FRONTEND: "1"
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      VLLM_SERVER_DEV_MODE: "1"
+      VLLM_USE_NCCL_SYMM_MEM: "1"
+      VLLM_USE_DEEP_GEMM: "1"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_RPC_TIMEOUT: "600000"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+      VLLM_LOG_STATS_INTERVAL: "1"
       VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
-      VLLM_USE_DEEP_GEMM: "1"
+      VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      DG_JIT_CACHE_DIR: /tmp/dg-cache-glm-5-2-fp8-disagg
+      UCX_TLS: cuda_copy,cuda_ipc,rc
+      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
-      ephemeral_storage: 1Ti
+      ephemeral_storage: 128Gi
     vllm:
       load_format: auto
       disable_uvicorn_access_log: true
       trust_remote_code: true
-      moe_backend: deep_gemm
-      all2all_backend: deepep_low_latency
+      enable_cumem_allocator: true
+      enable_ep_weight_filter: true
+      numa_bind: true
+      no_disable_hybrid_kv_cache_manager: true
+      no_enable_flashinfer_autotune: true
+      all2all_backend: deepep_v2
       kv_cache_dtype: fp8
+      block_size: 64
       max_model_len: auto
       disable_access_log_for_endpoints: /health,/metrics
       reasoning_parser: glm45
@@ -72,6 +108,12 @@ roles:
       # Guide default 0.95 assumes H200; lowered toward InferenceX's real
       # GB200 DEP16 decode mem-fraction-static (0.85-0.9) as a starting point.
       gpu_memory_utilization: "0.90"
+      max_num_batched_tokens: 256
+      max_num_seqs: 32
+      max_cudagraph_capture_size: 32
+      compilation_config: {cudagraph_mode: FULL_DECODE_ONLY, mode: 0}
+      kv_cache_metrics: true
+      kv_cache_metrics_sample: 0.25
 
   - name: prefill
     workload_name: vllm-dep8-prefill
@@ -79,26 +121,74 @@ roles:
     parallelism: {tp: 1, dp: 8, ep: true}
     dp_load_balancing: external
     kv_transfer_config:
-      kv_connector: NixlConnector
+      kv_connector: MultiConnector
       kv_role: kv_both
-      kv_buffer_device: cuda
-      kv_load_failure_policy: fail
+      kv_connector_extra_config:
+        connectors:
+          - kv_connector: NixlConnector
+            kv_role: kv_both
+            kv_buffer_device: cuda
+            kv_load_failure_policy: fail
+          - kv_connector: OffloadingConnector
+            kv_role: kv_both
+            kv_connector_extra_config:
+              spec_name: TieringOffloadingSpec
+              cpu_bytes_to_use: 107374182400  # 100 GiB/rank; 4 ranks/pod = 400 GiB mmap
+              eviction_policy: lru
+              offload_prompt_only: true
+              # self_describing_kv_events: true
+              secondary_tiers:
+                - type: p2p
+                  host: "__POD_IP__"
+                  port: "__P2P_PORT__"
+                  backends: ["UCX"]
+                  num_threads: 4
+    p2p_config: {port: 7777}
+    # 100 GiB/rank x 4 = 400 GiB mmap; 640Gi shm leaves headroom for UCX/NCCL.
+    shm_size: 640Gi
     env:
+      PYTHONHASHSEED: "0"
+      VLLM_USE_RUST_FRONTEND: "1"
+      VLLM_USE_V2_MODEL_RUNNER: "1"
+      VLLM_SERVER_DEV_MODE: "1"
+      VLLM_USE_NCCL_SYMM_MEM: "1"
+      VLLM_USE_DEEP_GEMM: "1"
+      VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+      VLLM_RPC_TIMEOUT: "600000"
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+      VLLM_LOG_STATS_INTERVAL: "1"
       VLLM_HTTP_TIMEOUT_KEEP_ALIVE: "120"
       VLLM_RANDOMIZE_DP_DUMMY_INPUTS: "1"
-      VLLM_USE_DEEP_GEMM: "1"
+      VLLM_CONNECTOR_PREFETCH_DEPTH: "8"
+      VLLM_CONNECTOR_PREFETCH_KV_CAP: "0.65"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
+      KV_OFFLOAD_CPU_BYTES: "107374182400"
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      DG_JIT_CACHE_DIR: /tmp/dg-cache-glm-5-2-fp8-disagg
+      UCX_TLS: cuda_copy,cuda_ipc,rc
+      UCX_CUDA_IPC_ENABLE_MNNVL: "y"
+      MC_ENABLE_DEST_DEVICE_AFFINITY: "1"
     resources:
-      ephemeral_storage: 1Ti
+      memory: 800Gi
+      ephemeral_storage: 256Gi
     vllm:
       load_format: auto
       disable_uvicorn_access_log: true
       trust_remote_code: true
-      moe_backend: deep_gemm
-      all2all_backend: deepep_high_throughput
+      enable_cumem_allocator: true
+      enable_ep_weight_filter: true
+      numa_bind: true
+      no_disable_hybrid_kv_cache_manager: true
+      no_enable_flashinfer_autotune: true
+      all2all_backend: deepep_v2
       kv_cache_dtype: fp8
+      block_size: 64
       max_model_len: auto
       disable_access_log_for_endpoints: /health,/metrics
       # Guide default 0.935 assumes H200; lowered toward InferenceX's real
       # GB200 DEP8 prefill mem-fraction-static (~0.8) as a starting point.
-      gpu_memory_utilization: "0.85"
-      max_num_batched_tokens: 2048
+      gpu_memory_utilization: "0.92"
+      max_num_batched_tokens: 8192
+      long_prefill_token_threshold: 1024
+      kv_cache_metrics: true
+      kv_cache_metrics_sample: 0.25

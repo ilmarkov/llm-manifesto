@@ -25,7 +25,7 @@ extraScrapeConfigs: |
         regex: vllm
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: '(8000|820.)'
+        regex: '(800.|820.)'
         action: keep
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
@@ -34,7 +34,7 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_label_llm_d_ai_model]
         target_label: model
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: '820(.)'
+        regex: '(?:800|820)(.)'
         target_label: rank
         replacement: '${1}'
     scrape_interval: 1s
@@ -54,7 +54,7 @@ extraScrapeConfigs: |
         regex: vllm
         action: keep
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: '(8000|820.)'
+        regex: '(800.|820.)'
         action: keep
       - source_labels: [__meta_kubernetes_pod_name]
         target_label: pod
@@ -63,7 +63,7 @@ extraScrapeConfigs: |
       - source_labels: [__meta_kubernetes_pod_label_llm_d_ai_model]
         target_label: model
       - source_labels: [__meta_kubernetes_pod_container_port_number]
-        regex: '820(.)'
+        regex: '(?:800|820)(.)'
         target_label: rank
         replacement: '${1}'
     scrape_interval: 1s
